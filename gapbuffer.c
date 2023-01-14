@@ -51,6 +51,7 @@ size_t gbWrite(int fildes, struct GapBuffer *buf, size_t nbyte) {
     write(fildes, buf->head.chars, buf->head.size);
     write(fildes, buf->tail.chars, nbyte - buf->head.size);
   }
+  write(fildes, "\r\n", 2);
 }
 
 void gbMoveGap(struct GapBuffer *buf, int pos) {

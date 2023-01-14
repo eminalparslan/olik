@@ -13,6 +13,13 @@
 
 enum EditorMode { Normal, Insert };
 
+/*
+  TODO:
+   - working prototype
+   - free lines after closing file
+   - skip list for lines
+*/
+
 struct Lines {
   struct GapBuffer **items;
   size_t size;
@@ -30,8 +37,11 @@ struct Editor {
 struct termios initial_termios;
 
 void clearScreen() {
-  write(STDOUT_FILENO, "\x1b[2J", 4);
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  printf("\x1b[2J");
+  printf("\x1b[H");
+  fflush(stdout);
+  // write(STDOUT_FILENO, "\x1b[2J", 4);
+  // write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
 void die(const char *s) {
@@ -80,11 +90,31 @@ void linesAppend(struct Lines *l, struct GapBuffer *buf) {
   l->items[l->size++] = buf;
 }
 
+void linesInsert(struct Lines *l, struct GapBuffer *buf, int pos) {
+  if (l->size >= l->capacity) {
+    l->capacity = l->capacity == 0 ? EDITOR_LINES_CAP : l->capacity * 2;
+    l->items = (struct GapBuffer *) realloc(l->items, l->capacity * sizeof(*(l->items)));
+    assert(l->items != NULL);
+  }
+  memmove(l->items + pos + 1, l->items + pos, l->size - pos);
+  l->items[pos] = buf;
+  l->size++;
+}
+
+void linesDelete(struct Lines *l, int pos) {
+  free(l->items[pos]);
+  memmove(l->items + pos, l->items + pos + 1, l->size - pos - 1);
+  l->size--;
+}
+
+struct GapBuffer *getLine(struct Editor *e, int row) {
+  return e->lines.items[row];
+}
+
 void initEditor(struct Editor *e) {
-  gbInit(&e->lines);
   e->lines.capacity = 0;
   e->lines.size = 0;
-  e->lines.items = NULL;
+  linesAppend(&e->lines, (struct GapBuffer *) calloc(1, sizeof(struct GapBuffer)));
 
   if (getWindowSize(&e->height, &e->width) == -1) die("getWindowSize");
 
@@ -103,17 +133,43 @@ int min(int a, int b) {
 }
 
 void cursorLeft(struct Editor *e, int n) {
-  if (e->col > 0) {
-    write(STDOUT_FILENO, "\x1B[1D", 4);
-    e->col--;
+  if (e->col - n >= 0) {
+    printf("\x1B[%dD", n);
+    fflush(stdout);
+    e->col -= n;
   }
 }
 
 void cursorDown(struct Editor *e, int n) {
-  if (e->row - e->offset + n < min(e->height, e->lines.len - e->offset)) {
-    e->row++;
-    if (e->col > )
+  if (e->row - e->offset + n < min(e->height, e->lines.size - e->offset)) {
+    e->row += n;
+    int len = gbLen(getLine(e, e->row));
+    if (e->col > len) {
+      e->col = len;
+    }
+    printf("\x1B[%d;%df", e->row+1, e->col+1);
+    fflush(stdout);
+  } else {
+    // TODO: scroll
   }
+}
+
+void cursorUp(struct Editor *e, int n) {
+  if (e->row - e->offset - n >= 0) {
+    e->row -= n;
+    int len = gbLen(getLine(e, e->row));
+    if (e->col > len) {
+      e->col = len;
+    }
+    printf("\x1B[%d;%df", e->row+1, e->col+1);
+    fflush(stdout);
+  } else {
+    // TODO: scroll
+  }
+}
+
+void cursorRight() {
+  
 }
 
 char getCh() {
