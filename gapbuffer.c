@@ -12,7 +12,8 @@ void strAppendChar(struct String *s, char c) {
 }
 
 void strAppendChars(struct String *s, const char *cs, int length) {
-  if (s->size + length >= s->capacity) {
+  if (s->capacity == 0) s->capacity = STRING_INIT_CAP;
+  if (s->size + length > s->capacity) {
     s->capacity = (s->size + length) * 2;
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
     assert(s->chars != NULL);
@@ -32,30 +33,36 @@ void strPrependChars(struct String *s, const char *cs, int length) {
   s->size += length;
 }
 
-char strShift(struct String *s) {
-  char c = s->chars[0];
-  s->size--;
-  memmove(s->chars, s->chars + 1, s->size);
-  return c;
+void strClear(struct String *s) {
+  s->size = 0;
 }
+
+// char strShift(struct String *s) {
+//   char c = s->chars[0];
+//   s->size--;
+//   memmove(s->chars, s->chars + 1, s->size);
+//   return c;
+// }
 
 int gbLen(struct GapBuffer *buf) {
   return buf->head.size + buf->tail.size;
 }
 
 size_t gbWrite(int fildes, struct GapBuffer *buf, size_t nbyte) {
-  assert(nbyte < gbLen(buf));
+  assert(nbyte <= gbLen(buf));
+  int written = 0;
   if (nbyte < buf->head.size) {
-    write(fildes, buf->head.chars, nbyte);
+    written += write(fildes, buf->head.chars, nbyte);
   } else {
-    write(fildes, buf->head.chars, buf->head.size);
-    write(fildes, buf->tail.chars, nbyte - buf->head.size);
+    written += write(fildes, buf->head.chars, buf->head.size);
+    written += write(fildes, buf->tail.chars, nbyte - buf->head.size);
   }
-  write(fildes, "\r\n", 2);
+  return written;
 }
 
 void gbMoveGap(struct GapBuffer *buf, int pos) {
-  assert(pos > 0 && pos < gbLen(buf));
+  // FIXME: pos is at len of buf
+  assert(pos >= 0 && pos < gbLen(buf));
 
   int headLength = buf->head.size;
   if (pos < headLength) {
@@ -91,9 +98,28 @@ void gbPushChars(struct GapBuffer *buf, const char *cs, int length) {
 }
 
 char gbPopChar(struct GapBuffer *buf) {
+  assert(gbLen(buf) > 0);
   if (buf->tail.size > 0) {
     return buf->tail.chars[--buf->tail.size];
-  } else if (buf->head.size > 0) {
+  } else {
     return buf->head.chars[--buf->head.size];
   }
+}
+
+void gbConcat(struct GapBuffer *dst, struct GapBuffer *src) {
+  gbPushChars(dst, src->head.chars, src->head.size);
+  gbPushChars(dst, src->tail.chars, src->tail.size);
+}
+
+void gbSplit(struct GapBuffer *dst, struct GapBuffer *src) {
+  gbPushChars(dst, src->tail.chars, src->tail.size);
+  strClear(&src->tail);
+}
+
+struct GapBuffer *gbCreate() {
+  return calloc(1, sizeof(struct GapBuffer));
+}
+
+void gbFree(struct GapBuffer *buf) {
+  free(buf);
 }
