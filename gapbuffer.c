@@ -2,7 +2,7 @@
 
 #define STRING_INIT_CAP 16
 
-void strAppendChar(struct String *s, char c) {
+void strAppendChar(String *s, char c) {
   if (s->size >= s->capacity) {
     s->capacity = s->capacity == 0 ? STRING_INIT_CAP : s->capacity * 2;
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
@@ -11,18 +11,17 @@ void strAppendChar(struct String *s, char c) {
   s->chars[s->size++] = c;
 }
 
-void strAppendChars(struct String *s, const char *cs, int length) {
-  if (s->capacity == 0) s->capacity = STRING_INIT_CAP;
+void strAppendChars(String *s, const char *cs, int length) {
   if (s->size + length > s->capacity) {
-    s->capacity = (s->size + length) * 2;
+    s->capacity = s->capacity == 0 ? STRING_INIT_CAP + length : (s->size + length) * 2;
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
     assert(s->chars != NULL);
   }
-  memcpy(s->chars + length, cs, length);
+  memcpy(s->chars + s->size, cs, length);
   s->size += length;
 }
 
-void strPrependChars(struct String *s, const char *cs, int length) {
+void strPrependChars(String *s, const char *cs, int length) {
   if (s->size + length >= s->capacity) {
     s->capacity = (s->size + length) * 2;
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
@@ -33,22 +32,22 @@ void strPrependChars(struct String *s, const char *cs, int length) {
   s->size += length;
 }
 
-void strClear(struct String *s) {
+void strClear(String *s) {
   s->size = 0;
 }
 
-// char strShift(struct String *s) {
+// char strShift(String s) {
 //   char c = s->chars[0];
 //   s->size--;
 //   memmove(s->chars, s->chars + 1, s->size);
 //   return c;
 // }
 
-int gbLen(struct GapBuffer *buf) {
+int gbLen(GapBuffer *buf) {
   return buf->head.size + buf->tail.size;
 }
 
-size_t gbWrite(int fildes, struct GapBuffer *buf, size_t nbyte) {
+size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte) {
   assert(nbyte <= gbLen(buf));
   int written = 0;
   if (nbyte < buf->head.size) {
@@ -60,9 +59,9 @@ size_t gbWrite(int fildes, struct GapBuffer *buf, size_t nbyte) {
   return written;
 }
 
-void gbMoveGap(struct GapBuffer *buf, int pos) {
+void gbMoveGap(GapBuffer *buf, int pos) {
   // FIXME: pos is at len of buf
-  assert(pos >= 0 && pos < gbLen(buf));
+  assert(pos >= 0 && pos <= gbLen(buf));
 
   int headLength = buf->head.size;
   if (pos < headLength) {
@@ -76,28 +75,28 @@ void gbMoveGap(struct GapBuffer *buf, int pos) {
   }
 }
 
-void gbInsertChar(struct GapBuffer *buf, char c) {
+void gbInsertChar(GapBuffer *buf, char c) {
   strAppendChar(&buf->head, c);
 }
 
-void gbInsertChars(struct GapBuffer *buf, const char *cs, int length) {
+void gbInsertChars(GapBuffer *buf, const char *cs, int length) {
   strAppendChars(&buf->head, cs, length);
 }
 
-char gbDeleteChar(struct GapBuffer *buf) {
+char gbDeleteChar(GapBuffer *buf) {
   assert(buf->head.size > 0);
   return buf->head.chars[--buf->head.size];
 }
 
-void gbPushChar(struct GapBuffer *buf, char c) {
+void gbPushChar(GapBuffer *buf, char c) {
   strAppendChar(&buf->tail, c);
 }
 
-void gbPushChars(struct GapBuffer *buf, const char *cs, int length) {
+void gbPushChars(GapBuffer *buf, const char *cs, int length) {
   strAppendChars(&buf->tail, cs, length);
 }
 
-char gbPopChar(struct GapBuffer *buf) {
+char gbPopChar(GapBuffer *buf) {
   assert(gbLen(buf) > 0);
   if (buf->tail.size > 0) {
     return buf->tail.chars[--buf->tail.size];
@@ -106,20 +105,27 @@ char gbPopChar(struct GapBuffer *buf) {
   }
 }
 
-void gbConcat(struct GapBuffer *dst, struct GapBuffer *src) {
+void gbConcat(GapBuffer *dst, GapBuffer *src) {
   gbPushChars(dst, src->head.chars, src->head.size);
   gbPushChars(dst, src->tail.chars, src->tail.size);
 }
 
-void gbSplit(struct GapBuffer *dst, struct GapBuffer *src) {
+void gbSplit(GapBuffer *dst, GapBuffer *src) {
   gbPushChars(dst, src->tail.chars, src->tail.size);
   strClear(&src->tail);
 }
 
-struct GapBuffer *gbCreate() {
-  return calloc(1, sizeof(struct GapBuffer));
+void gbPrint(GapBuffer *buf) {
+  write(STDOUT_FILENO, buf->head.chars, buf->head.size);
+  write(STDOUT_FILENO, buf->tail.chars, buf->tail.size);
+  const char nl = '\n';
+  write(STDOUT_FILENO, &nl, 1);
 }
 
-void gbFree(struct GapBuffer *buf) {
+GapBuffer *gbCreate() {
+  return calloc(1, sizeof(GapBuffer));
+}
+
+void gbFree(GapBuffer *buf) {
   free(buf);
 }

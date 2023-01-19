@@ -5,26 +5,27 @@
 
 #include <stdio.h>
 
-struct String {
+typedef struct {
   char *chars;
   size_t size;
   size_t capacity;
-};
+} String;
 
-struct GapBuffer {
-  struct String head, tail;
-};
+typedef struct {
+  String head, tail;
+} GapBuffer;
 
-int gbLen(struct GapBuffer *buf);
-size_t gbWrite(int fildes, struct GapBuffer *buf, size_t nbyte);
-void gbMoveGap(struct GapBuffer *buf, int pos);
-void gbInsertChar(struct GapBuffer *buf, char c);
-void gbInsertChars(struct GapBuffer *buf, const char *cs, int length);
-char gbDeleteChar(struct GapBuffer *buf);
-void gbPushChar(struct GapBuffer *buf, char c);
-void gbPushChars(struct GapBuffer *buf, const char *cs, int length);
-char gbPopChar(struct GapBuffer *buf);
-void gbConcat(struct GapBuffer *buf1, struct GapBuffer *buf2);
-void gbSplit(struct GapBuffer *dst, struct GapBuffer *src);
-struct GapBuffer *gbCreate();
-void gbFree(struct GapBuffer *buf);
+int gbLen(GapBuffer *buf);
+size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte);
+void gbMoveGap(GapBuffer *buf, int pos);
+void gbInsertChar(GapBuffer *buf, char c);
+void gbInsertChars(GapBuffer *buf, const char *cs, int length);
+char gbDeleteChar(GapBuffer *buf);
+void gbPushChar(GapBuffer *buf, char c);
+void gbPushChars(GapBuffer *buf, const char *cs, int length);
+char gbPopChar(GapBuffer *buf);
+void gbConcat(GapBuffer *buf1, GapBuffer *buf2);
+void gbSplit(GapBuffer *dst, GapBuffer *src);
+void gbPrint(GapBuffer *buf);
+GapBuffer *gbCreate();
+void gbFree(GapBuffer *buf);

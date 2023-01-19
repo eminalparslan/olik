@@ -9,6 +9,14 @@
 #include "gapbuffer.h"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define ESC_ERASE_SCREEN "\x1b[2J"
+#define ESC_ERASE_REST_SCREEN "\x1B[0J"
+#define ESC_ERASE_LINE "\x1B[2K\r"
+#define ESC_CURSOR_HOME "\x1b[H"
+#define ESC_CURSOR_LEFT "\x1B[%dD"
+#define ESC_CURSOR_RIGHT "\x1B[%dC" 
+#define ESC_SET_CURSOR_POS "\x1B[%d;%df" 
+#define ESC_SET_CURSOR_COL "\x1B[%dG"
 
 #define EDITOR_LINES_CAP 8
 
@@ -19,31 +27,27 @@ enum EditorMode { Normal, Insert };
    - working prototype
    - free lines after closing file
    - skip list for lines
-  FIXME:
-   - inserting chars segfault
 */
 
-struct Lines {
-  struct GapBuffer **bufs;
+typedef struct {
+  GapBuffer **bufs;
   size_t size;
   size_t capacity;
-};
+} Lines;
 
-struct Editor {
-  struct Lines lines;
+typedef struct {
+  Lines lines;
   int width, height;
   int row, col, offset;
   enum EditorMode mode;
   char *filename;
-};
+} Editor;
 
 struct termios orig_termios;
 
 void clearScreen() {
-  printf("\x1b[2J");
-  printf("\x1b[H");
-  // write(STDOUT_FILENO, "\x1b[2J", 4);
-  // write(STDOUT_FILENO, "\x1b[H", 3);
+  printf(ESC_ERASE_SCREEN);
+  printf(ESC_CURSOR_HOME);
 }
 
 void die(const char *s) {
@@ -69,7 +73,6 @@ void enableRawMode() {
   raw_termios.c_cc[VTIME] = 1;
 
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_termios) == -1) die("tcsetattr");
-
   setbuf(stdout, NULL);
 }
 
@@ -85,19 +88,19 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
-void linesAppend(struct Lines *l, struct GapBuffer *buf) {
+void linesAppend(Lines *l, GapBuffer *buf) {
   if (l->size >= l->capacity) {
     l->capacity = l->capacity == 0 ? EDITOR_LINES_CAP : l->capacity * 2;
-    l->bufs = (struct GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
+    l->bufs = (GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
     assert(l->bufs != NULL);
   }
   l->bufs[l->size++] = buf;
 }
 
-void linesInsert(struct Lines *l, struct GapBuffer *buf, int pos) {
+void linesInsert(Lines *l, GapBuffer *buf, int pos) {
   if (l->size >= l->capacity) {
     l->capacity = l->capacity == 0 ? EDITOR_LINES_CAP : l->capacity * 2;
-    l->bufs = (struct GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
+    l->bufs = (GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
     assert(l->bufs != NULL);
   }
   memmove(l->bufs + pos + 1, l->bufs + pos, l->size - pos);
@@ -105,17 +108,17 @@ void linesInsert(struct Lines *l, struct GapBuffer *buf, int pos) {
   l->size++;
 }
 
-void linesDelete(struct Lines *l, int pos) {
+void linesDelete(Lines *l, int pos) {
   gbFree(l->bufs[pos]);
   memmove(l->bufs + pos, l->bufs + pos + 1, l->size - pos - 1);
   l->size--;
 }
 
-struct GapBuffer *getLine(struct Editor *e, int row) {
+GapBuffer *getLine(Editor *e, int row) {
   return e->lines.bufs[row];
 }
 
-void initEditor(struct Editor *e) {
+void initEditor(Editor *e) {
   linesAppend(&e->lines, gbCreate());
   if (getWindowSize(&e->height, &e->width) == -1) die("getWindowSize");
 }
@@ -127,68 +130,69 @@ int min(int a, int b) {
   return b;
 }
 
-void cursorLeft(struct Editor *e, int n) {
+void cursorLeft(Editor *e, int n) {
   if (e->col - n >= 0) {
-    printf("\x1B[%dD", n);
+    printf(ESC_CURSOR_LEFT, n);
     e->col -= n;
   }
 }
 
-void cursorDown(struct Editor *e, int n) {
+void cursorDown(Editor *e, int n) {
   if (e->row - e->offset + n < min(e->height, e->lines.size - e->offset)) {
     e->row += n;
     int len = gbLen(getLine(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
-    printf("\x1B[%d;%df", e->row+1, e->col+1);
+    printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
   } else {
     // TODO: scroll
   }
 }
 
-void cursorUp(struct Editor *e, int n) {
+void cursorUp(Editor *e, int n) {
   if (e->row - e->offset - n >= 0) {
     e->row -= n;
     int len = gbLen(getLine(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
-    printf("\x1B[%d;%df", e->row+1, e->col+1);
+    printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
   } else {
     // TODO: scroll
   }
 }
 
-void cursorRight(struct Editor *e, int n) {
+void cursorRight(Editor *e, int n) {
   if (e->col < gbLen(getLine(e, e->row))) {
-    printf("\x1B[%dC", n);
+    printf(ESC_CURSOR_RIGHT, n);
     e->col += n;
   }
 }
 
-void renderLine(struct Editor *e) {
-  printf("\x1B[2K\r");
-  struct GapBuffer *gb = getLine(e, e->row);
+void renderLine(Editor *e) {
+  printf(ESC_ERASE_LINE);
+  GapBuffer *gb = getLine(e, e->row);
   gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+  printf(ESC_SET_CURSOR_COL, e->col+1);
 }
 
-void renderLinesAfter(struct Editor *e, int startRow) {
-  printf("\x1B[%d;%df", startRow, 0);
-  printf("\x1B[0J");
+void renderLinesAfter(Editor *e, int startRow) {
+  printf(ESC_SET_CURSOR_POS, startRow+1, 1);
+  printf(ESC_ERASE_REST_SCREEN);
   for (int row = startRow; row < e->height + e->offset; row++) {
-    printf("\x1B[%d;%df", row, 0);
-    struct GapBuffer *gb = getLine(e, row);
+    printf(ESC_SET_CURSOR_POS, row, 0);
+    GapBuffer *gb = getLine(e, row);
     gbWrite(STDOUT_FILENO, gb, gbLen(gb));
   }
-  printf("\x1B[%d;%df", e->row+1, e->col+1);
+  printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
 }
 
-void backspace(struct Editor *e) {
-  struct GapBuffer *gbCur = getLine(e, e->row);
+void backspace(Editor *e) {
+  GapBuffer *gbCur = getLine(e, e->row);
   if (e->col == 0) {
     if (e->row == 0) return;
-    struct GapBuffer *gbPrev = getLine(e, e->row - 1);
+    GapBuffer *gbPrev = getLine(e, e->row - 1);
     gbConcat(gbCur, gbPrev);
     linesDelete(&e->lines, e->row);
     cursorUp(e, 1);
@@ -206,34 +210,40 @@ void backspace(struct Editor *e) {
   }
 }
 
-void newLine(struct Editor *e) {
-  struct GapBuffer *gbCur = getLine(e, e->row);
+void newLine(Editor *e) {
+  GapBuffer *gbCur = getLine(e, e->row);
+  printf("here1\n");
   gbMoveGap(gbCur, e->col);
+  printf("here2\n");
 
-  struct GapBuffer *gbNew = gbCreate();
+  GapBuffer *gbNew = gbCreate();
+  printf("here3\n");
   gbSplit(gbNew, gbCur);
+  printf("here4\n");
   renderLine(e);
 
+  printf("here5\n");
   if (e->row == e->lines.size) {
     linesAppend(&e->lines, gbNew);
   } else {
     linesInsert(&e->lines, gbNew, e->row + 1);
   }
+  printf("here6\n");
   cursorDown(e, 1);
   e->col = 0;
   renderLinesAfter(e, e->row);
 }
 
-void loadFile(struct Editor *e) {
+void loadFile(Editor *e) {
 
 }
 
-void saveFile(struct Editor *e) {
+void saveFile(Editor *e) {
 
 }
 
-void writeCh(struct Editor *e, char ch) {
-  struct GapBuffer *gb = getLine(e, e->row);
+void writeCh(Editor *e, char ch) {
+  GapBuffer *gb = getLine(e, e->row);
   int lineLength = gbLen(gb);
   assert(e->col <= lineLength);
   if (e->col == lineLength) {
@@ -255,7 +265,7 @@ char getCh() {
   return c;
 }
 
-bool processChar(struct Editor *e) {
+bool processChar(Editor *e) {
   char c = getCh();
   if (e->mode == Normal) {
     switch (c) {
@@ -311,8 +321,8 @@ int main() {
   enableRawMode();
   clearScreen();
 
-  struct Editor *e;
-  e = (struct Editor *) calloc(1, sizeof(struct Editor));
+  Editor *e;
+  e = (Editor *) calloc(1, sizeof(Editor));
   if (e == NULL) {
     fprintf(stderr, "Allocation failed\n");
     exit(1);

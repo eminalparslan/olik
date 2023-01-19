@@ -1,3 +1,5 @@
 .vscode/
 olik.dSYM/
 olik
+*.o
+*.gch
