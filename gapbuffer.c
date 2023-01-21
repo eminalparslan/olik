@@ -43,7 +43,7 @@ void strClear(String *s) {
 //   return c;
 // }
 
-int gbLen(GapBuffer *buf) {
+size_t gbLen(GapBuffer *buf) {
   return buf->head.size + buf->tail.size;
 }
 

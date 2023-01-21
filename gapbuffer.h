@@ -15,7 +15,7 @@ typedef struct {
   String head, tail;
 } GapBuffer;
 
-int gbLen(GapBuffer *buf);
+size_t gbLen(GapBuffer *buf);
 size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte);
 void gbMoveGap(GapBuffer *buf, int pos);
 void gbInsertChar(GapBuffer *buf, char c);

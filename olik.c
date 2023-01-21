@@ -9,14 +9,6 @@
 #include "gapbuffer.h"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define ESC_ERASE_SCREEN "\x1b[2J"
-#define ESC_ERASE_REST_SCREEN "\x1B[0J"
-#define ESC_ERASE_LINE "\x1B[2K\r"
-#define ESC_CURSOR_HOME "\x1b[H"
-#define ESC_CURSOR_LEFT "\x1B[%dD"
-#define ESC_CURSOR_RIGHT "\x1B[%dC" 
-#define ESC_SET_CURSOR_POS "\x1B[%d;%df" 
-#define ESC_SET_CURSOR_COL "\x1B[%dG"
 
 #define EDITOR_LINES_CAP 8
 
@@ -45,9 +37,18 @@ typedef struct {
 
 struct termios orig_termios;
 
+void eraseScreen() { printf("\x1b[2J"); }
+void eraseRestScreen() { printf("\x1B[0J"); }
+void eraseLine() { printf("\x1B[2K\r"); }
+void moveCursorHome() { printf("\x1b[H"); }
+void moveCursorLeft(int n) { printf("\x1B[%dD", n); }
+void moveCursorRight(int n) { printf("\x1B[%dC", n); }
+void setCursorPos(int row, int col) { printf("\x1B[%d;%df", row+1, col+1); }
+void setCursorCol(int col) { printf("\x1B[%dG", col+1); }
+
 void clearScreen() {
-  printf(ESC_ERASE_SCREEN);
-  printf(ESC_CURSOR_HOME);
+  eraseScreen();
+  moveCursorHome();
 }
 
 void die(const char *s) {
@@ -115,7 +116,9 @@ void linesDelete(Lines *l, int pos) {
 }
 
 GapBuffer *getLine(Editor *e, int row) {
-  return e->lines.bufs[row];
+  if (row < e->lines.size)
+    return e->lines.bufs[row];
+  return NULL;
 }
 
 void initEditor(Editor *e) {
@@ -132,7 +135,7 @@ int min(int a, int b) {
 
 void cursorLeft(Editor *e, int n) {
   if (e->col - n >= 0) {
-    printf(ESC_CURSOR_LEFT, n);
+    moveCursorLeft(n);
     e->col -= n;
   }
 }
@@ -144,7 +147,7 @@ void cursorDown(Editor *e, int n) {
     if (e->col > len) {
       e->col = len;
     }
-    printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
+    setCursorPos(e->row, e->col);
   } else {
     // TODO: scroll
   }
@@ -157,7 +160,7 @@ void cursorUp(Editor *e, int n) {
     if (e->col > len) {
       e->col = len;
     }
-    printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
+    setCursorPos(e->row, e->col);
   } else {
     // TODO: scroll
   }
@@ -165,27 +168,27 @@ void cursorUp(Editor *e, int n) {
 
 void cursorRight(Editor *e, int n) {
   if (e->col < gbLen(getLine(e, e->row))) {
-    printf(ESC_CURSOR_RIGHT, n);
+    moveCursorRight(n);
     e->col += n;
   }
 }
 
 void renderLine(Editor *e) {
-  printf(ESC_ERASE_LINE);
+  eraseLine();
   GapBuffer *gb = getLine(e, e->row);
   gbWrite(STDOUT_FILENO, gb, gbLen(gb));
-  printf(ESC_SET_CURSOR_COL, e->col+1);
+  setCursorCol(e->col);
 }
 
 void renderLinesAfter(Editor *e, int startRow) {
-  printf(ESC_SET_CURSOR_POS, startRow+1, 1);
-  printf(ESC_ERASE_REST_SCREEN);
+  setCursorPos(startRow, 0);
+  eraseRestScreen();
   for (int row = startRow; row < e->height + e->offset; row++) {
-    printf(ESC_SET_CURSOR_POS, row, 0);
+    setCursorPos(row, 0);
     GapBuffer *gb = getLine(e, row);
-    gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+    if (gb) gbWrite(STDOUT_FILENO, gb, gbLen(gb));
   }
-  printf(ESC_SET_CURSOR_POS, e->row+1, e->col+1);
+  setCursorPos(e->row, e->col);
 }
 
 void backspace(Editor *e) {
@@ -212,23 +215,16 @@ void backspace(Editor *e) {
 
 void newLine(Editor *e) {
   GapBuffer *gbCur = getLine(e, e->row);
-  printf("here1\n");
   gbMoveGap(gbCur, e->col);
-  printf("here2\n");
-
   GapBuffer *gbNew = gbCreate();
-  printf("here3\n");
   gbSplit(gbNew, gbCur);
-  printf("here4\n");
   renderLine(e);
 
-  printf("here5\n");
   if (e->row == e->lines.size) {
     linesAppend(&e->lines, gbNew);
   } else {
     linesInsert(&e->lines, gbNew, e->row + 1);
   }
-  printf("here6\n");
   cursorDown(e, 1);
   e->col = 0;
   renderLinesAfter(e, e->row);
