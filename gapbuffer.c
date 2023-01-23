@@ -8,7 +8,7 @@ void strAppendChar(String *s, char c) {
   // Check if capacity needs to grow
   if (s->size >= s->capacity) {
     s->capacity = s->capacity == 0 ? STRING_INIT_CAP : s->capacity * 2;
-    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
+    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(char));
     assert(s->chars != NULL);
   }
   s->chars[s->size++] = c;
@@ -19,11 +19,11 @@ void strAppendChars(String *s, const char *cs, int length) {
   // Check if capacity needs to grow
   if (s->size + length > s->capacity) {
     s->capacity = s->capacity == 0 ? STRING_INIT_CAP + length : (s->size + length) * 2;
-    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
+    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(char));
     assert(s->chars != NULL);
   }
   // Copy chars to strings
-  memcpy(&s->chars[s->size], cs, length * sizeof(*(s->chars)));
+  memcpy(&s->chars[s->size], cs, length * sizeof(char));
   s->size += length;
 }
 
@@ -32,13 +32,13 @@ void strPrependChars(String *s, const char *cs, int length) {
   // Check if capacity needs to grow
   if (s->size + length > s->capacity) {
     s->capacity = (s->size + length) * 2;
-    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
+    s->chars = (char *) realloc(s->chars, s->capacity * sizeof(char));
     assert(s->chars != NULL);
   }
   // Shift string chars to make room at the beginning
-  memmove(&s->chars[length], s->chars, s->size * sizeof(*(s->chars)));
+  memmove(&s->chars[length], s->chars, s->size * sizeof(char));
   // Copy chars to beginning
-  memcpy(s->chars, cs, length * sizeof(*(s->chars)));
+  memcpy(s->chars, cs, length * sizeof(char));
   s->size += length;
 }
 
@@ -56,15 +56,31 @@ size_t gbLen(GapBuffer *buf) {
    Returns the total bytes written. */
 size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte) {
   assert(nbyte <= gbLen(buf));
-  int written = 0;
+  int written;
   if (nbyte < buf->head.size) {
     // Only need to write chars from head string
-    written += write(fildes, buf->head.chars, nbyte);
+    written = write(fildes, buf->head.chars, nbyte);
   } else {
-    written += write(fildes, buf->head.chars, buf->head.size);
-    written += write(fildes, buf->tail.chars, nbyte - buf->head.size);
+    char chars[nbyte];
+    memcpy(chars, buf->head.chars, buf->head.size * sizeof(char));
+    memcpy(&chars[buf->head.size], buf->tail.chars, (nbyte - buf->head.size) * sizeof(char));
+    written = write(fildes, chars, nbyte);
   }
   return written;
+}
+
+size_t gbfWrite(GapBuffer *buf, FILE *fp) {
+  size_t size = gbLen(buf);
+  char chars[size + 1];
+  chars[size] = '\0';
+  if (size < buf->head.size) {
+    // Only need to write chars from head string
+    memcpy(chars, buf->head.chars, size);
+  } else {
+    memcpy(chars, buf->head.chars, buf->head.size * sizeof(char));
+    memcpy(&chars[buf->head.size], buf->tail.chars, (size - buf->head.size) * sizeof(char));
+  }
+  return fprintf(fp, "%s\n", chars);
 }
 
 /* Move the gap in the gap buffer to pos. */
@@ -82,7 +98,7 @@ void gbMoveGap(GapBuffer *buf, int pos) {
     strAppendChars(&buf->head, buf->tail.chars, pos);
     buf->tail.size -= pos;
     // Shift the tail string chars after pos to the beginning
-    memmove(buf->tail.chars, &buf->tail.chars[pos], buf->tail.size * sizeof(*(buf->tail.chars)));
+    memmove(buf->tail.chars, &buf->tail.chars[pos], buf->tail.size * sizeof(char));
   }
 }
 
@@ -132,13 +148,6 @@ void gbConcat(GapBuffer *dst, GapBuffer *src) {
 void gbSplit(GapBuffer *dst, GapBuffer *src) {
   gbPushChars(dst, src->tail.chars, src->tail.size);
   strClear(&src->tail);
-}
-
-/* Prints the gap buffer at fildes. */
-void gbPrint(GapBuffer *buf, int fildes) {
-  gbWrite(fildes, buf, gbLen(buf));
-  const char nl = '\n';
-  write(fildes, &nl, 1);
 }
 
 /* Creates a new gap buffer. */

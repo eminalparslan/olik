@@ -18,7 +18,6 @@
    - opening and saving files
    - free lines after closing file
    - skip list for lines
-   - error checking
 */
 
 enum EditorMode { Normal, Insert };
@@ -57,7 +56,8 @@ void debugEditor(Editor *e) {
   fprintf(stderr, "  struct Lines {\n");
   for (int i = 0; i < e->lines.size; i++) {
     fprintf(stderr, "    %d: ", i);
-    gbPrint(e->lines.bufs[i], STDERR_FILENO);
+    gbWrite(STDERR_FILENO, e->lines.bufs[i], gbLen(e->lines.bufs[i]));
+    fprintf(stderr, "\n");
   }
   fprintf(stderr, "  }\n");
   fprintf(stderr, "  width: %d, height: %d\n", e->width, e->height);
@@ -156,12 +156,6 @@ GapBuffer *getLine(Editor *e, int row) {
   if (row < e->lines.size)
     return e->lines.bufs[row];
   return NULL;
-}
-
-/* Initializes the editor state. The editor should be allocated with calloc. */
-void initEditor(Editor *e) {
-  linesAppend(&e->lines, gbCreate());
-  if (getWindowSize(&e->height, &e->width) == -1) die("getWindowSize");
 }
 
 /* Helper min function. */
@@ -296,12 +290,35 @@ void newLine(Editor *e) {
 
 /* Load file into editor buffer. */
 void loadFile(Editor *e) {
+  FILE *fp;
+  char *line = NULL;
+  size_t len = 0;
+  ssize_t read;
 
+  fp = fopen(e->filename, "r");
+  if (fp == NULL) die("fopen");
+
+  while ((read = getline(&line, &len, fp)) != -1) {
+    GapBuffer *gbNew = gbCreate();
+    gbPushChars(gbNew, line, read - 1);
+    linesAppend(&e->lines, gbNew);
+  }
+
+  fclose(fp);
+  free(line);
+  renderLinesAfter(e, 0);
 }
 
 /* Save editor buffer into file. */
 void saveFile(Editor *e) {
+  FILE *fp;
+  fp = fopen(e->filename, "w");
 
+  for (int i = 0; i < e->lines.size; i++) {
+    gbfWrite(e->lines.bufs[i], fp);
+  }
+
+  fclose(fp);
 }
 
 /* Write a character to the terminal screen. */
@@ -387,20 +404,36 @@ bool processChar(Editor *e) {
   return false;
 }
 
-int main() {
+/* Initializes the editor state. The editor should be allocated with calloc. */
+void initEditor(Editor *e) {
+  if (getWindowSize(&e->height, &e->width) == -1) die("getWindowSize");
+}
+
+void handleArgs(Editor *e, int argc, char *argv[]) {  
+  if (argc == 1) {
+    linesAppend(&e->lines, gbCreate());
+  } else if (argc == 2) {
+    e->filename = argv[1];
+    if (strlen(e->filename) > 0) loadFile(e);
+  }
+}
+
+int main(int argc, char *argv[]) {
   enableRawMode();
   clearScreen();
 
-  Editor *e;
-  e = (Editor *) calloc(1, sizeof(Editor));
-  if (e == NULL) die("Allocation failed\n");
+  Editor *e = (Editor *) calloc(1, sizeof(Editor));
+  if (e == NULL) die("Calloc");
   initEditor(e);
+  handleArgs(e, argc, argv);
 
   bool quit = false;
   while (!quit) {
     quit = processChar(e);
     //debugEditor(e);
   };
+
+  if (strlen(e->filename) > 0) saveFile(e);
 
   return 0;
 }
