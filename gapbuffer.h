@@ -26,6 +26,6 @@ void gbPushChars(GapBuffer *buf, const char *cs, int length);
 char gbPopChar(GapBuffer *buf);
 void gbConcat(GapBuffer *buf1, GapBuffer *buf2);
 void gbSplit(GapBuffer *dst, GapBuffer *src);
-void gbPrint(GapBuffer *buf);
+void gbPrint(GapBuffer *buf, int fildes);
 GapBuffer *gbCreate();
 void gbFree(GapBuffer *buf);

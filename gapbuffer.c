@@ -17,7 +17,7 @@ void strAppendChars(String *s, const char *cs, int length) {
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
     assert(s->chars != NULL);
   }
-  memcpy(s->chars + s->size, cs, length);
+  memcpy(s->chars + s->size, cs, length * sizeof(*(s->chars)));
   s->size += length;
 }
 
@@ -27,21 +27,14 @@ void strPrependChars(String *s, const char *cs, int length) {
     s->chars = (char *) realloc(s->chars, s->capacity * sizeof(*(s->chars)));
     assert(s->chars != NULL);
   }
-  memmove(s->chars + length, s->chars, s->size);
-  memcpy(s->chars, cs, length);
+  memmove(s->chars + length, s->chars, s->size * sizeof(*(s->chars)));
+  memcpy(s->chars, cs, length * sizeof(*(s->chars)));
   s->size += length;
 }
 
 void strClear(String *s) {
   s->size = 0;
 }
-
-// char strShift(String s) {
-//   char c = s->chars[0];
-//   s->size--;
-//   memmove(s->chars, s->chars + 1, s->size);
-//   return c;
-// }
 
 size_t gbLen(GapBuffer *buf) {
   return buf->head.size + buf->tail.size;
@@ -71,7 +64,7 @@ void gbMoveGap(GapBuffer *buf, int pos) {
     pos -= headLength;
     strAppendChars(&buf->head, buf->tail.chars, pos);
     buf->tail.size -= pos;
-    memmove(buf->tail.chars, buf->tail.chars + pos, buf->tail.size);
+    memmove(buf->tail.chars, buf->tail.chars + pos, buf->tail.size * sizeof(*(buf->tail.chars)));
   }
 }
 
@@ -115,11 +108,10 @@ void gbSplit(GapBuffer *dst, GapBuffer *src) {
   strClear(&src->tail);
 }
 
-void gbPrint(GapBuffer *buf) {
-  write(STDOUT_FILENO, buf->head.chars, buf->head.size);
-  write(STDOUT_FILENO, buf->tail.chars, buf->tail.size);
+void gbPrint(GapBuffer *buf, int fildes) {
+  gbWrite(fildes, buf, gbLen(buf));
   const char nl = '\n';
-  write(STDOUT_FILENO, &nl, 1);
+  write(fildes, &nl, 1);
 }
 
 GapBuffer *gbCreate() {

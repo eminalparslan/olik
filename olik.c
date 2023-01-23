@@ -11,6 +11,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 #define EDITOR_LINES_CAP 8
+#define DEBUG 1
 
 enum EditorMode { Normal, Insert };
 
@@ -19,6 +20,7 @@ enum EditorMode { Normal, Insert };
    - working prototype
    - free lines after closing file
    - skip list for lines
+   - error checking
 */
 
 typedef struct {
@@ -45,6 +47,20 @@ void moveCursorLeft(int n) { printf("\x1B[%dD", n); }
 void moveCursorRight(int n) { printf("\x1B[%dC", n); }
 void setCursorPos(int row, int col) { printf("\x1B[%d;%df", row+1, col+1); }
 void setCursorCol(int col) { printf("\x1B[%dG", col+1); }
+
+void debugEditor(Editor *e) {
+  fprintf(stderr, "struct Editor {\n");
+  fprintf(stderr, "  struct Lines {\n");
+  for (int i = 0; i < e->lines.size; i++) {
+    fprintf(stderr, "    %d: ", i);
+    gbPrint(e->lines.bufs[i], STDERR_FILENO);
+  }
+  fprintf(stderr, "  }\n");
+  fprintf(stderr, "  width: %d, height: %d\n", e->width, e->height);
+  fprintf(stderr, "  row: %d, col: %d, offset: %d\n", e->row, e->col, e->offset);
+  fprintf(stderr, "  mode: %s\n", e->mode == Normal ? "Normal" : "Insert");
+  fprintf(stderr, "}\n");
+}
 
 void clearScreen() {
   eraseScreen();
@@ -104,14 +120,14 @@ void linesInsert(Lines *l, GapBuffer *buf, int pos) {
     l->bufs = (GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
     assert(l->bufs != NULL);
   }
-  memmove(l->bufs + pos + 1, l->bufs + pos, l->size - pos);
+  memmove(&l->bufs[pos+1], &l->bufs[pos], (l->size - pos) * sizeof(*(l->bufs)));
   l->bufs[pos] = buf;
   l->size++;
 }
 
 void linesDelete(Lines *l, int pos) {
   gbFree(l->bufs[pos]);
-  memmove(l->bufs + pos, l->bufs + pos + 1, l->size - pos - 1);
+  memmove(&l->bufs[pos], &l->bufs[pos+1], (l->size - pos - 1) * sizeof(*(l->bufs)));
   l->size--;
 }
 
@@ -196,10 +212,9 @@ void backspace(Editor *e) {
   if (e->col == 0) {
     if (e->row == 0) return;
     GapBuffer *gbPrev = getLine(e, e->row - 1);
-    gbConcat(gbCur, gbPrev);
+    gbConcat(gbPrev, gbCur);
     linesDelete(&e->lines, e->row);
     cursorUp(e, 1);
-    cursorRight(e, gbLen(gbPrev));
     renderLinesAfter(e, e->row);
   } else if (e->col == gbLen(gbCur)) {
     gbPopChar(gbCur);
@@ -290,16 +305,16 @@ bool processChar(Editor *e) {
       writeCh(e, c);
     } else {
       switch (c) {
-        case 27:
+        case 27: // Esc
           e->mode = Normal;
           break;
-        case 127:
+        case 127: // Backspace
           backspace(e);
           break;
-        case 13:
+        case 13: // Enter
           newLine(e);
           break;
-        case 9:
+        case 9: // Tab
           for (int i = 0; i < 2; i++) {
             writeCh(e, ' ');
           }
@@ -328,6 +343,7 @@ int main() {
   bool quit = false;
   while (!quit) {
     quit = processChar(e);
+    debugEditor(e);
   };
 
   clearScreen();
