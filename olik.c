@@ -15,9 +15,10 @@
 
 /*
   TODO:
-   - opening and saving files
+   - more cursor navigation
    - free lines after closing file
    - skip list for lines
+   - hide the cursor when repainting
 */
 
 enum EditorMode { Normal, Insert };
@@ -119,43 +120,69 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 /* Append a gap buffer to the lines. */
-void linesAppend(Lines *l, GapBuffer *buf) {
+void linesAppend(Editor *e, GapBuffer *buf) {
   // Grow lines capacity if needed
-  if (l->size >= l->capacity) {
-    l->capacity = l->capacity == 0 ? EDITOR_LINES_CAP : l->capacity * 2;
-    l->bufs = (GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
-    assert(l->bufs != NULL);
+  if (e->lines.size >= e->lines.capacity) {
+    e->lines.capacity = e->lines.capacity == 0 ? EDITOR_LINES_CAP : e->lines.capacity * 2;
+    e->lines.bufs = (GapBuffer **) realloc(e->lines.bufs, e->lines.capacity * sizeof(GapBuffer *));
+    assert(e->lines.bufs != NULL);
   }
-  l->bufs[l->size++] = buf;
+  e->lines.bufs[e->lines.size++] = buf;
 }
 
-/* Insert a gap buffer in the lines at pos. */
-void linesInsert(Lines *l, GapBuffer *buf, int pos) {
+/* Insert a gap buffer in the lines at row. */
+void linesInsert(Editor *e, GapBuffer *buf, int row) {
+  row += e->offset;
   // Grow lines capacity if needed
-  if (l->size >= l->capacity) {
-    l->capacity = l->capacity == 0 ? EDITOR_LINES_CAP : l->capacity * 2;
-    l->bufs = (GapBuffer **) realloc(l->bufs, l->capacity * sizeof(*(l->bufs)));
-    assert(l->bufs != NULL);
+  if (e->lines.size >= e->lines.capacity) {
+    e->lines.capacity = e->lines.capacity == 0 ? EDITOR_LINES_CAP : e->lines.capacity * 2;
+    e->lines.bufs = (GapBuffer **) realloc(e->lines.bufs, e->lines.capacity * sizeof(GapBuffer *));
+    assert(e->lines.bufs != NULL);
   }
   // Shifts gap buffer pointers after pos by 1
-  memmove(&l->bufs[pos+1], &l->bufs[pos], (l->size - pos) * sizeof(*(l->bufs)));
-  l->bufs[pos] = buf;
-  l->size++;
+  memmove(&(e->lines.bufs[row+1]), &(e->lines.bufs[row]), (e->lines.size - row) * sizeof(GapBuffer *));
+  e->lines.bufs[row] = buf;
+  e->lines.size++;
 }
 
 /* Deletes and frees the gap buffer at pos in lines. */
-void linesDelete(Lines *l, int pos) {
-  gbFree(l->bufs[pos]);
+void linesDelete(Editor *e, int row) {
+  row += e->offset;
+  gbFree(e->lines.bufs[row]);
   // Shifts gap buffer pointers after pos back by 1
-  memmove(&l->bufs[pos], &l->bufs[pos+1], (l->size - pos - 1) * sizeof(*(l->bufs)));
-  l->size--;
+  memmove(&e->lines.bufs[row], &e->lines.bufs[row+1], (e->lines.size - row - 1) * sizeof(GapBuffer *));
+  e->lines.size--;
 }
 
 /* Returns the gap buffer at the given row. */
 GapBuffer *getLine(Editor *e, int row) {
   if (row < e->lines.size)
-    return e->lines.bufs[row];
+    return e->lines.bufs[row + e->offset];
   return NULL;
+}
+
+/* Renders the current line. */
+void renderLine(Editor *e) {
+  eraseLine();
+  GapBuffer *gb = getLine(e, e->row);
+  gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+  setCursorCol(e->col);
+}
+
+/* Render all the lines after startRow. */
+void renderLinesAfter(Editor *e, int startRow) {
+  setCursorPos(startRow, 0);
+  eraseRestScreen();
+  for (int row = startRow; row < e->height; row++) {
+    setCursorPos(row, 0);
+    GapBuffer *gb = getLine(e, row);
+    if (gb) gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+  }
+  setCursorPos(e->row, e->col);
+}
+
+void renderScreen(Editor *e) {
+  renderLinesAfter(e, 0);
 }
 
 /* Helper min function. */
@@ -178,7 +205,9 @@ void cursorLeft(Editor *e, int n) {
 /* Moves the cursor down by n. Scrolls if needed. */
 void cursorDown(Editor *e, int n) {
   if (n <= 0 ) return;
-  if (e->row - e->offset + n < min(e->height, e->lines.size - e->offset)) {
+  if (e->row + e->offset + n >= e->lines.size) return;
+
+  if (e->row + n < e->height) {
     e->row += n;
     // Stay on the text
     int len = gbLen(getLine(e, e->row));
@@ -187,14 +216,22 @@ void cursorDown(Editor *e, int n) {
     }
     setCursorPos(e->row, e->col);
   } else {
-    // TODO: scroll
+    e->offset += n;
+    // Stay on the text
+    int len = gbLen(getLine(e, e->row));
+    if (e->col > len) {
+      e->col = len;
+    }
+    renderScreen(e);
   }
 }
 
 /* Moves the cursor up by n. Scrolls if needed. */
 void cursorUp(Editor *e, int n) {
   if (n <= 0 ) return;
-  if (e->row - e->offset - n >= 0) {
+  if (e->row + e->offset - n < 0) return;
+
+  if (e->row - n >= 0) {
     e->row -= n;
     // Stay on the text
     int len = gbLen(getLine(e, e->row));
@@ -203,7 +240,13 @@ void cursorUp(Editor *e, int n) {
     }
     setCursorPos(e->row, e->col);
   } else {
-    // TODO: scroll
+    e->offset -= n;
+    // Stay on the text
+    int len = gbLen(getLine(e, e->row));
+    if (e->col > len) {
+      e->col = len;
+    }
+    renderScreen(e);
   }
 }
 
@@ -214,26 +257,6 @@ void cursorRight(Editor *e, int n) {
     moveCursorRight(n);
     e->col += n;
   }
-}
-
-/* Renders the current line. */
-void renderLine(Editor *e) {
-  eraseLine();
-  GapBuffer *gb = getLine(e, e->row);
-  gbWrite(STDOUT_FILENO, gb, gbLen(gb));
-  setCursorCol(e->col);
-}
-
-/* Render all the lines after startRow. */
-void renderLinesAfter(Editor *e, int startRow) {
-  setCursorPos(startRow, 0);
-  eraseRestScreen();
-  for (int row = startRow; row < e->height + e->offset; row++) {
-    setCursorPos(row, 0);
-    GapBuffer *gb = getLine(e, row);
-    if (gb) gbWrite(STDOUT_FILENO, gb, gbLen(gb));
-  }
-  setCursorPos(e->row, e->col);
 }
 
 /* Handle backspace. */
@@ -247,7 +270,7 @@ void backspace(Editor *e) {
     // Append current line to the end of previous line
     gbConcat(gbPrev, gbCur);
     // Delete current line
-    linesDelete(&e->lines, e->row);
+    linesDelete(e, e->row);
     // Move cursor up and to the end of original text
     cursorUp(e, 1);
     cursorRight(e, prevLen);
@@ -276,12 +299,12 @@ void newLine(Editor *e) {
   gbSplit(gbNew, gbCur);
   renderLine(e);
 
-  if (e->row == e->lines.size) {
+  if (e->row + e->offset == e->lines.size) {
     // If its the last line, just append
-    linesAppend(&e->lines, gbNew);
+    linesAppend(e, gbNew);
   } else {
     // Otherwise, insert the new gap buffer
-    linesInsert(&e->lines, gbNew, e->row + 1);
+    linesInsert(e, gbNew, e->row + 1);
   }
   cursorDown(e, 1);
   e->col = 0;
@@ -301,7 +324,7 @@ void loadFile(Editor *e) {
   while ((read = getline(&line, &len, fp)) != -1) {
     GapBuffer *gbNew = gbCreate();
     gbPushChars(gbNew, line, read - 1);
-    linesAppend(&e->lines, gbNew);
+    linesAppend(e, gbNew);
   }
 
   fclose(fp);
@@ -411,7 +434,7 @@ void initEditor(Editor *e) {
 
 void handleArgs(Editor *e, int argc, char *argv[]) {  
   if (argc == 1) {
-    linesAppend(&e->lines, gbCreate());
+    linesAppend(e, gbCreate());
   } else if (argc == 2) {
     e->filename = argv[1];
     if (strlen(e->filename) > 0) loadFile(e);
