@@ -150,6 +150,16 @@ void gbSplit(GapBuffer *dst, GapBuffer *src) {
   strClear(&src->tail);
 }
 
+char gbGetChar(GapBuffer *buf, int pos) {
+  assert(gbLen(buf) > 0);
+  assert(pos >= 0 && pos < gbLen(buf));
+  if (pos < buf->head.size) {
+    return buf->head.chars[pos];
+  } else {
+    return buf->tail.chars[pos - buf->head.size];
+  }
+}
+
 /* Creates a new gap buffer. */
 GapBuffer *gbCreate() {
   GapBuffer *gbNew = calloc(1, sizeof(GapBuffer));

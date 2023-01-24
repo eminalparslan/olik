@@ -10,15 +10,17 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// Starting capacity of lines in editor
+// Initial increase in capacity for each line in editor
 #define EDITOR_LINES_CAP 8
 
 /*
   TODO:
    - more cursor navigation
+   - optimize scrolling rendering
    - free lines after closing file
    - skip list for lines
    - hide the cursor when repainting
+   - syntax highlighting
 */
 
 enum EditorMode { Normal, Insert };
@@ -32,11 +34,12 @@ typedef struct {
 
 // Editor state and contents
 typedef struct {
-  Lines lines;
-  int width, height;
-  int row, col, offset;
-  enum EditorMode mode;
-  char *filename;
+  Lines lines;          // Contains the gap buffers for each line
+  int width, height;    // Width and height of the terminal window
+  int row, col;         // Row and col in terminal window
+  int offset;           // Offset of the window from start of file
+  enum EditorMode mode; // Current mode of the editor
+  char *filename;       // Name of the open file
 } Editor;
 
 struct termios orig_termios;
@@ -259,6 +262,110 @@ void cursorRight(Editor *e, int n) {
   }
 }
 
+/* Moves the cursor to the end of the line. */
+void cursorLineEnd(Editor *e) {
+  size_t len = gbLen(getLine(e, e->row));
+  e->col = len;
+  setCursorCol(e->col);
+}
+
+/* Moves the cursor to the start of the line. */
+void cursorLineStart(Editor *e) {
+  e->col = 0;
+  setCursorCol(e->col);
+}
+
+/* Moves the cursor to the start of the text on the current line. */
+void cursorTextStart(Editor *e) {
+  GapBuffer *gb = getLine(e, e->row);
+  size_t len = gbLen(gb);
+  for (int i = 0; i < len; i++) {
+    if (!isspace(gbGetChar(gb, i))) {
+      e->col = i;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+}
+
+/* Moves the cursor forward by a word. */
+void cursorWordForward(Editor *e) {
+  GapBuffer *gb = getLine(e, e->row);
+  size_t len = gbLen(gb);
+  for (int i = e->col; i < len - 1; i++) {
+    if (isspace(gbGetChar(gb, i)) && isalnum(gbGetChar(gb, i+1))) {
+      e->col = i + 1;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+  cursorLineEnd(e);
+}
+
+/* Moves the cursor backward by a word. */
+void cursorWordBackward(Editor *e) {
+  GapBuffer *gb = getLine(e, e->row);
+  if (gbLen(gb) == e->col) e->col--;
+  for (int i = e->col; i > 0; i--) {
+    if (isspace(gbGetChar(gb, i)) && isalnum(gbGetChar(gb, i-1))) {
+      e->col = i - 1;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+  cursorLineStart(e);
+}
+
+/* Moves the cursor to the next char c in the line. */
+void cursorFindForward(Editor *e, char c) {
+  GapBuffer *gb = getLine(e, e->row);
+  size_t len = gbLen(gb);
+  for (int i = e->col; i < len; i++) {
+    if (gbGetChar(gb, i) == c) {
+      e->col = i;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+}
+
+/* Moves the cursor before the next char c in the line. */
+void cursorFindToForward(Editor *e, char c) {
+  GapBuffer *gb = getLine(e, e->row);
+  size_t len = gbLen(gb);
+  for (int i = e->col; i < len; i++) {
+    if (gbGetChar(gb, i) == c) {
+      e->col = i - 1;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+}
+
+/* Moves the cursor backward to the next char c in the line. */
+void cursorFindBackward(Editor *e, char c) {
+  GapBuffer *gb = getLine(e, e->row);
+  for (int i = e->col; i >= 0; i--) {
+    if (gbGetChar(gb, i) == c) {
+      e->col = i;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+}
+
+/* Moves the cursor backward before the next char c in the line. */
+void cursorFindToBackward(Editor *e, char c) {
+  GapBuffer *gb = getLine(e, e->row);
+  for (int i = e->col; i >= 0; i--) {
+    if (gbGetChar(gb, i) == c) {
+      e->col = i + 1;
+      setCursorCol(e->col);
+      return;
+    }
+  }
+}
+
 /* Handle backspace. */
 void backspace(Editor *e) {
   GapBuffer *gbCur = getLine(e, e->row);
@@ -301,7 +408,7 @@ void newLine(Editor *e) {
 
   if (e->row + e->offset == e->lines.size) {
     // If its the last line, just append
-    linesAppend(e, gbNew);
+  linesAppend(e , gbNew);
   } else {
     // Otherwise, insert the new gap buffer
     linesInsert(e, gbNew, e->row + 1);
@@ -372,6 +479,13 @@ char getCh() {
   return c;
 }
 
+/* Handle tab. */
+void tab(Editor *e) {
+  for (int i = 0; i < 2; i++) {
+    writeCh(e, ' ');
+  }
+}
+
 /* Handle the next character input. */
 bool processChar(Editor *e) {
   char c = getCh();
@@ -395,6 +509,39 @@ bool processChar(Editor *e) {
       case 'l':
         cursorRight(e, 1);
         break;
+      case 'w':
+        cursorWordForward(e);
+        break;
+      case 'b':
+        cursorWordBackward(e);
+        break;
+      case '$':
+        cursorLineEnd(e);
+        break;
+      case '^':
+        cursorTextStart(e);
+        break;
+      case '0':
+        cursorLineStart(e);
+        break;
+      case 'f':
+        c = getCh();
+        cursorFindForward(e, c);
+        break;
+      case 'F':
+        c = getCh();
+        cursorFindBackward(e, c);
+        break;
+      case 't':
+        c = getCh();
+        cursorFindToForward(e, c);
+        break;
+      case 'T':
+        c = getCh();
+        cursorFindToBackward(e, c);
+        break;
+      case ';':
+        break;
       default:
         break;
     }
@@ -414,9 +561,7 @@ bool processChar(Editor *e) {
           newLine(e);
           break;
         case 9: // Tab
-          for (int i = 0; i < 2; i++) {
-            writeCh(e, ' ');
-          }
+          tab(e);
           break;
         default:
           //printf("%d", c);
@@ -446,7 +591,7 @@ int main(int argc, char *argv[]) {
   clearScreen();
 
   Editor *e = (Editor *) calloc(1, sizeof(Editor));
-  if (e == NULL) die("Calloc");
+  if (e == NULL) die("calloc");
   initEditor(e);
   handleArgs(e, argc, argv);
 
