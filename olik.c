@@ -17,10 +17,12 @@
   TODO:
    - more cursor navigation
    - optimize scrolling rendering
+   - undo
    - free lines after closing file
    - skip list for lines
    - hide the cursor when repainting
    - syntax highlighting
+   - multiple cursors?
 */
 
 enum EditorMode { Normal, Insert };
@@ -288,6 +290,18 @@ void cursorTextStart(Editor *e) {
   }
 }
 
+/* Moves the cursor to the end of the line and goes into insert mode. */
+void cursorLineEndInsert(Editor *e) {
+  cursorLineEnd(e);
+  e->mode = Insert;
+}
+
+/* Moves the cursor to the end of the line and goes into insert mode. */
+void cursorLineStartInsert(Editor *e) {
+  cursorLineStart(e);
+  e->mode = Insert;
+}
+
 /* Moves the cursor forward by a word. */
 void cursorWordForward(Editor *e) {
   GapBuffer *gb = getLine(e, e->row);
@@ -408,12 +422,33 @@ void newLine(Editor *e) {
 
   if (e->row + e->offset == e->lines.size) {
     // If its the last line, just append
-  linesAppend(e , gbNew);
+    linesAppend(e, gbNew);
   } else {
     // Otherwise, insert the new gap buffer
     linesInsert(e, gbNew, e->row + 1);
   }
   cursorDown(e, 1);
+  e->col = 0;
+  renderLinesAfter(e, e->row);
+}
+
+void newLineNext(Editor *e) {
+  GapBuffer *gbNew = gbCreate();
+  if (e->row + e->offset == e->lines.size) {
+    // If its the last line, just append
+    linesAppend(e, gbNew);
+  } else {
+    // Otherwise, insert the new gap buffer
+    linesInsert(e, gbNew, e->row + 1);
+  }
+  cursorDown(e, 1);
+  e->col = 0;
+  renderLinesAfter(e, e->row);
+}
+
+void newLineCurrent(Editor *e) {
+  GapBuffer *gbNew = gbCreate();
+  linesInsert(e, gbNew, e->row);
   e->col = 0;
   renderLinesAfter(e, e->row);
 }
@@ -486,9 +521,15 @@ void tab(Editor *e) {
   }
 }
 
+/* Deletes the given line. */
+void deleteLine(Editor *e) {
+  if (getCh() != 'd') return;
+  linesDelete(e, e->row);
+  renderLinesAfter(e, e->row);
+}
+
 /* Handle the next character input. */
-bool processChar(Editor *e) {
-  char c = getCh();
+bool processChar(Editor *e, char c) {
   if (e->mode == Normal) {
     // Deal with normal node keys.
     switch (c) {
@@ -496,6 +537,9 @@ bool processChar(Editor *e) {
         return true;
       case 'i':
         e->mode = Insert;
+        break;
+      case 'I':
+        cursorLineStartInsert(e);
         break;
       case 'h':
         cursorLeft(e, 1);
@@ -541,6 +585,23 @@ bool processChar(Editor *e) {
         cursorFindToBackward(e, c);
         break;
       case ';':
+        // TODO: repeat last find char
+        break;
+      case 'o':
+        newLineNext(e);
+        break;
+      case 'O':
+        newLineCurrent(e);
+        break;
+      case 'a':
+        cursorRight(e, 1);
+        e->mode = Insert;
+        break;
+      case 'A':
+        cursorLineEndInsert(e);
+        break;
+      case 'd':
+        deleteLine(e);
         break;
       default:
         break;
@@ -597,7 +658,7 @@ int main(int argc, char *argv[]) {
 
   bool quit = false;
   while (!quit) {
-    quit = processChar(e);
+    quit = processChar(e, getCh());
     //debugEditor(e);
   };
 
