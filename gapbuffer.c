@@ -52,24 +52,8 @@ size_t gbLen(GapBuffer *buf) {
   return buf->head.size + buf->tail.size;
 }
 
-/* Write nbyte bytes of gap buffer buf to fildes.
-   Returns the total bytes written. */
-size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte) {
-  assert(nbyte <= gbLen(buf));
-  int written;
-  if (nbyte < buf->head.size) {
-    // Only need to write chars from head string
-    written = write(fildes, buf->head.chars, nbyte);
-  } else {
-    char chars[nbyte];
-    memcpy(chars, buf->head.chars, buf->head.size * sizeof(char));
-    memcpy(&chars[buf->head.size], buf->tail.chars, (nbyte - buf->head.size) * sizeof(char));
-    written = write(fildes, chars, nbyte);
-  }
-  return written;
-}
-
-size_t gbfWrite(GapBuffer *buf, FILE *fp) {
+/* Prints the gap buffer as a string to file descriptor. */
+size_t gbPrint(GapBuffer *buf, FILE *fp) {
   size_t size = gbLen(buf);
   char chars[size + 1];
   chars[size] = '\0';
@@ -80,7 +64,7 @@ size_t gbfWrite(GapBuffer *buf, FILE *fp) {
     memcpy(chars, buf->head.chars, buf->head.size * sizeof(char));
     memcpy(&chars[buf->head.size], buf->tail.chars, (size - buf->head.size) * sizeof(char));
   }
-  return fprintf(fp, "%s\n", chars);
+  return fprintf(fp, "%s", chars);
 }
 
 /* Move the gap in the gap buffer to pos. */

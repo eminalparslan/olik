@@ -16,8 +16,7 @@ typedef struct {
 } GapBuffer;
 
 size_t gbLen(GapBuffer *buf);
-size_t gbWrite(int fildes, GapBuffer *buf, size_t nbyte);
-size_t gbfWrite(GapBuffer *buf, FILE *fp);
+size_t gbPrint(GapBuffer *buf, FILE *fp);
 void gbMoveGap(GapBuffer *buf, int pos);
 void gbInsertChar(GapBuffer *buf, char c);
 void gbInsertChars(GapBuffer *buf, const char *cs, int length);

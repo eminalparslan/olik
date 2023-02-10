@@ -19,21 +19,18 @@
 
 /*
   TODO:
-   - optimize scrolling rendering
-   - hide the cursor when repainting
-   - undo
    - repeat changes
+   - undo/redo
    - change/delete word
-   - status bar
    - searching
+   - zz position screen
+   - syntax highlighting
+   - status bar
    - selecting, copying, pasting
    - replace/delete char
-   - zz position screen
    - deal with tabs
-   - syntax highlighting
    - skip list for lines
    - free lines after closing file
-   - multiple cursors?
 */
 
 enum EditorMode { Normal, Insert };
@@ -67,6 +64,8 @@ void moveCursorLeft(int n) { printf("\x1B[%dD", n); }
 void moveCursorRight(int n) { printf("\x1B[%dC", n); }
 void setCursorPos(int row, int col) { printf("\x1B[%d;%df", row+1, col+1); }
 void setCursorCol(int col) { printf("\x1B[%dG", col+1); }
+void hideCursor() { printf("\x1B[?25l"); }
+void showCursor() { printf("\x1B[?25h"); }
 
 /* Prints the editor content to stderr. */
 void debugEditor(Editor *e) {
@@ -74,7 +73,7 @@ void debugEditor(Editor *e) {
   fprintf(stderr, "  struct Lines {\n");
   for (int i = 0; i < e->lines.size; i++) {
     fprintf(stderr, "    %d: ", i);
-    gbWrite(STDERR_FILENO, e->lines.bufs[i], gbLen(e->lines.bufs[i]));
+    gbPrint(e->lines.bufs[i], stdout);
     fprintf(stderr, "\n");
   }
   fprintf(stderr, "  }\n");
@@ -119,8 +118,8 @@ void enableRawMode() {
   raw_termios.c_cc[VTIME] = 1;
 
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_termios) == -1) die("tcsetattr");
-  // turn off stdout buffer
-  setbuf(stdout, NULL);
+  // Turn off stdout buffer
+  setvbuf(stdout, NULL, _IONBF, 0);
 }
 
 /* Gets the window size of the terminal in rows and cols. */
@@ -182,20 +181,22 @@ GapBuffer *getRow(Editor *e, int row) {
 void renderLine(Editor *e) {
   eraseLine();
   GapBuffer *gb = getRow(e, e->row);
-  gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+  gbPrint(gb, stdout);
   setCursorCol(e->col);
 }
 
 /* Render all the lines after startRow. */
 void renderLinesAfter(Editor *e, int startRow) {
+  hideCursor();
   setCursorPos(startRow, 0);
   eraseRestScreen();
   for (int row = startRow; row < e->height; row++) {
     setCursorPos(row, 0);
     GapBuffer *gb = getRow(e, row);
-    if (gb) gbWrite(STDOUT_FILENO, gb, gbLen(gb));
+    if (gb) gbPrint(gb, stdout);
   }
   setCursorPos(e->row, e->col);
+  showCursor();
 }
 
 void renderScreen(Editor *e) {
@@ -409,10 +410,19 @@ void cursorFindToBackward(Editor *e) {
   }
 }
 
+void cursorHome(Editor *e) {
+  e->row = 0;
+  e->col = 0;
+  moveCursorHome();
+}
+
 /* Scrolls the screen half a page down. */
 void scrollHalfPageDown(Editor *e) {
   e->offset += e->height / 2;
-  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  if (e->offset + e->row > e->lines.size) {
+    e->offset = e->lines.size - 1;
+    cursorHome(e);
+  }
   renderScreen(e);
 }
 
@@ -426,7 +436,10 @@ void scrollHalfPageUp(Editor *e) {
 /* Scrolls the screen a page down. */
 void scrollPageDown(Editor *e) {
   e->offset += e->height;
-  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  if (e->offset > e->lines.size) {
+    e->offset = e->lines.size - 1;
+    cursorHome(e);
+  }
   renderScreen(e);
 }
 
@@ -440,7 +453,10 @@ void scrollPageUp(Editor *e) {
 /* Scroll the screen a line down. */
 void scrollLineDown(Editor *e) {
   e->offset += 1;
-  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  if (e->offset > e->lines.size) {
+    e->offset = e->lines.size - 1;
+    cursorHome(e);
+  }
   renderScreen(e);
 }
 
@@ -555,7 +571,8 @@ void saveFile(Editor *e) {
   fp = fopen(e->fileName, "w");
 
   for (int i = 0; i < e->lines.size; i++) {
-    gbfWrite(e->lines.bufs[i], fp);
+    gbPrint(e->lines.bufs[i], fp);
+    fprintf(fp, "\n");
   }
 
   fclose(fp);
@@ -627,7 +644,7 @@ void changeRestLine(Editor *e) {
 /* Handle the next character input. */
 bool processChar(Editor *e, char c) {
   if (e->mode == Normal) {
-    // Deal with normal mode keys.
+    // Deal with normal mode keys
     switch (c) {
       case 'q':
         if (getCh() == 'q') return true;
@@ -684,22 +701,22 @@ bool processChar(Editor *e, char c) {
         deleteRestLine(e); break;
       case 'C':
         changeRestLine(e); break;
-      case 4: // <C-d>
+      case CTRL_KEY('d'):
         scrollHalfPageDown(e); break;
-      case 21: // <C-u>
+      case CTRL_KEY('u'):
         scrollHalfPageUp(e); break;
-      case 6: // <C-f>
+      case CTRL_KEY('f'):
         scrollPageDown(e); break;
-      case 2: // <C-b>
+      case CTRL_KEY('b'):
         scrollPageUp(e); break;
-      case 5: // <C-e>
+      case CTRL_KEY('e'):
         scrollLineDown(e); break;
-      case 25: // <C-y>
+      case CTRL_KEY('y'):
         scrollLineUp(e); break;
       default: break;
     }
   } else if (e->mode == Insert) {
-    // Deal with insert mode keys.
+    // Deal with insert mode keys
     if (isprint(c)) {
       writeCh(e, c);
     } else {
