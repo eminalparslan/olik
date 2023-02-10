@@ -41,7 +41,8 @@ typedef struct {
   int row, col;         // Row and col in terminal window
   int offset;           // Offset of the window from start of file
   enum EditorMode mode; // Current mode of the editor
-  char *filename;       // Name of the open file
+  bool fileOpen;        // Whether a file is open
+  char *fileName;       // Name of the open file
 } Editor;
 
 struct termios orig_termios;
@@ -306,8 +307,9 @@ void cursorLineStartInsert(Editor *e) {
 void cursorWordForward(Editor *e) {
   GapBuffer *gb = getLine(e, e->row);
   size_t len = gbLen(gb);
-  for (int i = e->col; i < len - 1; i++) {
-    if (isspace(gbGetChar(gb, i)) && isalnum(gbGetChar(gb, i+1))) {
+  if (len == 0) return;
+  for (int i = e->col + 1; i < len - 1; i++) {
+    if (isspace(gbGetChar(gb, i)) && !isspace(gbGetChar(gb, i+1))) {
       e->col = i + 1;
       setCursorCol(e->col);
       return;
@@ -319,9 +321,11 @@ void cursorWordForward(Editor *e) {
 /* Moves the cursor backward by a word. */
 void cursorWordBackward(Editor *e) {
   GapBuffer *gb = getLine(e, e->row);
-  if (gbLen(gb) == e->col) e->col--;
+  size_t len = gbLen(gb);
+  if (len == 0) return;
+  if (len == e->col) e->col--;
   for (int i = e->col; i > 0; i--) {
-    if (isspace(gbGetChar(gb, i)) && isalnum(gbGetChar(gb, i-1))) {
+    if (isspace(gbGetChar(gb, i)) && !isspace(gbGetChar(gb, i-1))) {
       e->col = i - 1;
       setCursorCol(e->col);
       return;
@@ -432,6 +436,7 @@ void newLine(Editor *e) {
   renderLinesAfter(e, e->row);
 }
 
+/* Creates a new line on the next line. */
 void newLineNext(Editor *e) {
   GapBuffer *gbNew = gbCreate();
   if (e->row + e->offset == e->lines.size) {
@@ -444,13 +449,16 @@ void newLineNext(Editor *e) {
   cursorDown(e, 1);
   e->col = 0;
   renderLinesAfter(e, e->row);
+  e->mode = Insert;
 }
 
+/* Creates a new line on the current line. */
 void newLineCurrent(Editor *e) {
   GapBuffer *gbNew = gbCreate();
   linesInsert(e, gbNew, e->row);
   e->col = 0;
   renderLinesAfter(e, e->row);
+  e->mode = Insert;
 }
 
 /* Load file into editor buffer. */
@@ -460,7 +468,7 @@ void loadFile(Editor *e) {
   size_t len = 0;
   ssize_t read;
 
-  fp = fopen(e->filename, "r");
+  fp = fopen(e->fileName, "r");
   if (fp == NULL) die("fopen");
 
   while ((read = getline(&line, &len, fp)) != -1) {
@@ -477,7 +485,7 @@ void loadFile(Editor *e) {
 /* Save editor buffer into file. */
 void saveFile(Editor *e) {
   FILE *fp;
-  fp = fopen(e->filename, "w");
+  fp = fopen(e->fileName, "w");
 
   for (int i = 0; i < e->lines.size; i++) {
     gbfWrite(e->lines.bufs[i], fp);
@@ -526,6 +534,7 @@ void deleteLine(Editor *e) {
   if (getCh() != 'd') return;
   linesDelete(e, e->row);
   renderLinesAfter(e, e->row);
+  if (e->row + e->offset == e->lines.size) cursorUp(e, 1);
 }
 
 /* Handle the next character input. */
@@ -641,9 +650,11 @@ void initEditor(Editor *e) {
 void handleArgs(Editor *e, int argc, char *argv[]) {  
   if (argc == 1) {
     linesAppend(e, gbCreate());
+    e->fileOpen = false;
   } else if (argc == 2) {
-    e->filename = argv[1];
-    if (strlen(e->filename) > 0) loadFile(e);
+    e->fileName = argv[1];
+    e->fileOpen = true;
+    loadFile(e);
   }
 }
 
@@ -662,7 +673,7 @@ int main(int argc, char *argv[]) {
     //debugEditor(e);
   };
 
-  if (strlen(e->filename) > 0) saveFile(e);
+  if (e->fileOpen) saveFile(e);
 
   return 0;
 }
