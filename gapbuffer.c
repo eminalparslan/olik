@@ -150,6 +150,10 @@ void gbSplit(GapBuffer *dst, GapBuffer *src) {
   strClear(&src->tail);
 }
 
+void gbClearTail(GapBuffer *buf) {
+  strClear(&buf->tail);
+}
+
 char gbGetChar(GapBuffer *buf, int pos) {
   assert(gbLen(buf) > 0);
   assert(pos >= 0 && pos < gbLen(buf));

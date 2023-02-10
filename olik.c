@@ -1,3 +1,7 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -15,13 +19,20 @@
 
 /*
   TODO:
-   - more cursor navigation
    - optimize scrolling rendering
-   - undo
-   - free lines after closing file
-   - skip list for lines
    - hide the cursor when repainting
+   - undo
+   - repeat changes
+   - change/delete word
+   - status bar
+   - searching
+   - selecting, copying, pasting
+   - replace/delete char
+   - zz position screen
+   - deal with tabs
    - syntax highlighting
+   - skip list for lines
+   - free lines after closing file
    - multiple cursors?
 */
 
@@ -86,7 +97,7 @@ void die(const char *s) {
   exit(1);
 }
 
-/* Disables raw mode. Called at program exit. */
+/* Disables raw mode for termios. Called at program exit. */
 void disableRawMode() {
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) die("tcsetattr");
   clearScreen();
@@ -161,7 +172,7 @@ void linesDelete(Editor *e, int row) {
 }
 
 /* Returns the gap buffer at the given row. */
-GapBuffer *getLine(Editor *e, int row) {
+GapBuffer *getRow(Editor *e, int row) {
   if (row < e->lines.size)
     return e->lines.bufs[row + e->offset];
   return NULL;
@@ -170,7 +181,7 @@ GapBuffer *getLine(Editor *e, int row) {
 /* Renders the current line. */
 void renderLine(Editor *e) {
   eraseLine();
-  GapBuffer *gb = getLine(e, e->row);
+  GapBuffer *gb = getRow(e, e->row);
   gbWrite(STDOUT_FILENO, gb, gbLen(gb));
   setCursorCol(e->col);
 }
@@ -181,7 +192,7 @@ void renderLinesAfter(Editor *e, int startRow) {
   eraseRestScreen();
   for (int row = startRow; row < e->height; row++) {
     setCursorPos(row, 0);
-    GapBuffer *gb = getLine(e, row);
+    GapBuffer *gb = getRow(e, row);
     if (gb) gbWrite(STDOUT_FILENO, gb, gbLen(gb));
   }
   setCursorPos(e->row, e->col);
@@ -189,6 +200,16 @@ void renderLinesAfter(Editor *e, int startRow) {
 
 void renderScreen(Editor *e) {
   renderLinesAfter(e, 0);
+}
+
+/* Get the next character input. */
+char getCh() {
+  int nread;
+  char c;
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+    if (nread == -1 && errno != EAGAIN) die("read");
+  }
+  return c;
 }
 
 /* Helper min function. */
@@ -216,7 +237,7 @@ void cursorDown(Editor *e, int n) {
   if (e->row + n < e->height) {
     e->row += n;
     // Stay on the text
-    int len = gbLen(getLine(e, e->row));
+    int len = gbLen(getRow(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
@@ -224,7 +245,7 @@ void cursorDown(Editor *e, int n) {
   } else {
     e->offset += n;
     // Stay on the text
-    int len = gbLen(getLine(e, e->row));
+    int len = gbLen(getRow(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
@@ -240,7 +261,7 @@ void cursorUp(Editor *e, int n) {
   if (e->row - n >= 0) {
     e->row -= n;
     // Stay on the text
-    int len = gbLen(getLine(e, e->row));
+    int len = gbLen(getRow(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
@@ -248,7 +269,7 @@ void cursorUp(Editor *e, int n) {
   } else {
     e->offset -= n;
     // Stay on the text
-    int len = gbLen(getLine(e, e->row));
+    int len = gbLen(getRow(e, e->row));
     if (e->col > len) {
       e->col = len;
     }
@@ -259,7 +280,7 @@ void cursorUp(Editor *e, int n) {
 /* Moves the cursor right by n. */
 void cursorRight(Editor *e, int n) {
   if (n <= 0 ) return;
-  if (e->col < gbLen(getLine(e, e->row))) {
+  if (e->col < gbLen(getRow(e, e->row))) {
     moveCursorRight(n);
     e->col += n;
   }
@@ -267,7 +288,7 @@ void cursorRight(Editor *e, int n) {
 
 /* Moves the cursor to the end of the line. */
 void cursorLineEnd(Editor *e) {
-  size_t len = gbLen(getLine(e, e->row));
+  size_t len = gbLen(getRow(e, e->row));
   e->col = len;
   setCursorCol(e->col);
 }
@@ -280,7 +301,7 @@ void cursorLineStart(Editor *e) {
 
 /* Moves the cursor to the start of the text on the current line. */
 void cursorTextStart(Editor *e) {
-  GapBuffer *gb = getLine(e, e->row);
+  GapBuffer *gb = getRow(e, e->row);
   size_t len = gbLen(gb);
   for (int i = 0; i < len; i++) {
     if (!isspace(gbGetChar(gb, i))) {
@@ -305,7 +326,7 @@ void cursorLineStartInsert(Editor *e) {
 
 /* Moves the cursor forward by a word. */
 void cursorWordForward(Editor *e) {
-  GapBuffer *gb = getLine(e, e->row);
+  GapBuffer *gb = getRow(e, e->row);
   size_t len = gbLen(gb);
   if (len == 0) return;
   for (int i = e->col + 1; i < len - 1; i++) {
@@ -320,7 +341,7 @@ void cursorWordForward(Editor *e) {
 
 /* Moves the cursor backward by a word. */
 void cursorWordBackward(Editor *e) {
-  GapBuffer *gb = getLine(e, e->row);
+  GapBuffer *gb = getRow(e, e->row);
   size_t len = gbLen(gb);
   if (len == 0) return;
   if (len == e->col) e->col--;
@@ -335,8 +356,9 @@ void cursorWordBackward(Editor *e) {
 }
 
 /* Moves the cursor to the next char c in the line. */
-void cursorFindForward(Editor *e, char c) {
-  GapBuffer *gb = getLine(e, e->row);
+void cursorFindForward(Editor *e) {
+  char c = getCh();
+  GapBuffer *gb = getRow(e, e->row);
   size_t len = gbLen(gb);
   for (int i = e->col; i < len; i++) {
     if (gbGetChar(gb, i) == c) {
@@ -348,8 +370,9 @@ void cursorFindForward(Editor *e, char c) {
 }
 
 /* Moves the cursor before the next char c in the line. */
-void cursorFindToForward(Editor *e, char c) {
-  GapBuffer *gb = getLine(e, e->row);
+void cursorFindToForward(Editor *e) {
+  char c = getCh();
+  GapBuffer *gb = getRow(e, e->row);
   size_t len = gbLen(gb);
   for (int i = e->col; i < len; i++) {
     if (gbGetChar(gb, i) == c) {
@@ -361,8 +384,9 @@ void cursorFindToForward(Editor *e, char c) {
 }
 
 /* Moves the cursor backward to the next char c in the line. */
-void cursorFindBackward(Editor *e, char c) {
-  GapBuffer *gb = getLine(e, e->row);
+void cursorFindBackward(Editor *e) {
+  char c = getCh();
+  GapBuffer *gb = getRow(e, e->row);
   for (int i = e->col; i >= 0; i--) {
     if (gbGetChar(gb, i) == c) {
       e->col = i;
@@ -373,8 +397,9 @@ void cursorFindBackward(Editor *e, char c) {
 }
 
 /* Moves the cursor backward before the next char c in the line. */
-void cursorFindToBackward(Editor *e, char c) {
-  GapBuffer *gb = getLine(e, e->row);
+void cursorFindToBackward(Editor *e) {
+  char c = getCh();
+  GapBuffer *gb = getRow(e, e->row);
   for (int i = e->col; i >= 0; i--) {
     if (gbGetChar(gb, i) == c) {
       e->col = i + 1;
@@ -384,13 +409,55 @@ void cursorFindToBackward(Editor *e, char c) {
   }
 }
 
+/* Scrolls the screen half a page down. */
+void scrollHalfPageDown(Editor *e) {
+  e->offset += e->height / 2;
+  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  renderScreen(e);
+}
+
+/* Scrolls the screen half a page up. */
+void scrollHalfPageUp(Editor *e) {
+  e->offset -= e->height / 2;
+  if (e->offset < 0) e->offset = 0;
+  renderScreen(e);
+}
+
+/* Scrolls the screen a page down. */
+void scrollPageDown(Editor *e) {
+  e->offset += e->height;
+  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  renderScreen(e);
+}
+
+/* Scrolls the screen a page up. */
+void scrollPageUp(Editor *e) {
+  e->offset -= e->height;
+  if (e->offset < 0) e->offset = 0;
+  renderScreen(e);
+}
+
+/* Scroll the screen a line down. */
+void scrollLineDown(Editor *e) {
+  e->offset += 1;
+  if (e->offset > e->lines.size) e->offset = e->lines.size - 1;
+  renderScreen(e);
+}
+
+/* Scroll the screen a line up. */
+void scrollLineUp(Editor *e) {
+  e->offset -= 1;
+  if (e->offset < 0) e->offset = 0;
+  renderScreen(e);
+}
+
 /* Handle backspace. */
 void backspace(Editor *e) {
-  GapBuffer *gbCur = getLine(e, e->row);
+  GapBuffer *gbCur = getRow(e, e->row);
   if (e->col == 0) {
     if (e->row == 0) return;
     // Backspace at start of line
-    GapBuffer *gbPrev = getLine(e, e->row - 1);
+    GapBuffer *gbPrev = getRow(e, e->row - 1);
     size_t prevLen = gbLen(gbPrev);
     // Append current line to the end of previous line
     gbConcat(gbPrev, gbCur);
@@ -417,7 +484,7 @@ void backspace(Editor *e) {
 
 /* Handle new line (enter). */
 void newLine(Editor *e) {
-  GapBuffer *gbCur = getLine(e, e->row);
+  GapBuffer *gbCur = getRow(e, e->row);
   gbMoveGap(gbCur, e->col);
   GapBuffer *gbNew = gbCreate();
   // Split the current line at col, and put the second half in gbNew
@@ -496,7 +563,7 @@ void saveFile(Editor *e) {
 
 /* Write a character to the terminal screen. */
 void writeCh(Editor *e, char ch) {
-  GapBuffer *gb = getLine(e, e->row);
+  GapBuffer *gb = getRow(e, e->row);
   int lineLength = gbLen(gb);
   assert(e->col <= lineLength);
 
@@ -512,16 +579,6 @@ void writeCh(Editor *e, char ch) {
   renderLine(e);
 }
 
-/* Get the next character input. */
-char getCh() {
-  int nread;
-  char c;
-  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-    if (nread == -1 && errno != EAGAIN) die("read");
-  }
-  return c;
-}
-
 /* Handle tab. */
 void tab(Editor *e) {
   for (int i = 0; i < 2; i++) {
@@ -529,91 +586,117 @@ void tab(Editor *e) {
   }
 }
 
-/* Deletes the given line. */
+/* Deletes the line. */
 void deleteLine(Editor *e) {
-  if (getCh() != 'd') return;
   linesDelete(e, e->row);
   renderLinesAfter(e, e->row);
   if (e->row + e->offset == e->lines.size) cursorUp(e, 1);
 }
 
+/* Delete handler. */
+void delete(Editor *e) {
+  char c = getCh();
+  if (c == 'd') deleteLine(e);
+}
+
+/* Clears the line and goes into insert mode. */
+void changeLine(Editor *e) {
+  deleteLine(e);
+  newLineCurrent(e);
+  e->mode = Insert;
+}
+
+/* Change handler. */
+void change(Editor *e) {
+  char c = getCh();
+  if (c == 'c') changeLine(e);
+}
+
+void deleteRestLine(Editor *e) {
+  GapBuffer *gb = getRow(e, e->row);
+  gbMoveGap(gb, e->col);
+  gbClearTail(gb);
+  renderLine(e);
+}
+
+void changeRestLine(Editor *e) {
+  deleteRestLine(e);
+  e->mode = Insert;
+}
+
 /* Handle the next character input. */
 bool processChar(Editor *e, char c) {
   if (e->mode == Normal) {
-    // Deal with normal node keys.
+    // Deal with normal mode keys.
     switch (c) {
       case 'q':
-        return true;
+        if (getCh() == 'q') return true;
+      case 's':
+        if (e->fileOpen) saveFile(e); break;
       case 'i':
-        e->mode = Insert;
-        break;
+        e->mode = Insert; break;
       case 'I':
-        cursorLineStartInsert(e);
-        break;
+        cursorLineStartInsert(e); break;
       case 'h':
-        cursorLeft(e, 1);
-        break;
+        cursorLeft(e, 1); break;
       case 'j':
-        cursorDown(e, 1);
-        break;
+        cursorDown(e, 1); break;
       case 'k':
-        cursorUp(e, 1);
-        break;
+        cursorUp(e, 1); break;
       case 'l':
-        cursorRight(e, 1);
-        break;
+        cursorRight(e, 1); break;
       case 'w':
-        cursorWordForward(e);
-        break;
+        cursorWordForward(e); break;
       case 'b':
-        cursorWordBackward(e);
-        break;
+        cursorWordBackward(e); break;
       case '$':
-        cursorLineEnd(e);
-        break;
+        cursorLineEnd(e); break;
       case '^':
-        cursorTextStart(e);
-        break;
+        cursorTextStart(e); break;
       case '0':
-        cursorLineStart(e);
-        break;
+        cursorLineStart(e); break;
       case 'f':
-        c = getCh();
-        cursorFindForward(e, c);
-        break;
+        cursorFindForward(e); break;
       case 'F':
-        c = getCh();
-        cursorFindBackward(e, c);
-        break;
+        cursorFindBackward(e); break;
       case 't':
-        c = getCh();
-        cursorFindToForward(e, c);
-        break;
+        cursorFindToForward(e); break;
       case 'T':
-        c = getCh();
-        cursorFindToBackward(e, c);
-        break;
+        cursorFindToBackward(e); break;
       case ';':
         // TODO: repeat last find char
         break;
       case 'o':
-        newLineNext(e);
-        break;
+        newLineNext(e); break;
       case 'O':
-        newLineCurrent(e);
-        break;
+        newLineCurrent(e); break;
       case 'a':
         cursorRight(e, 1);
         e->mode = Insert;
         break;
       case 'A':
-        cursorLineEndInsert(e);
-        break;
+        cursorLineEndInsert(e); break;
       case 'd':
-        deleteLine(e);
-        break;
-      default:
-        break;
+        delete(e); break;
+      case 'c':
+        change(e); break;
+      case 'D':
+        deleteRestLine(e); break;
+      case 'C':
+        changeRestLine(e); break;
+      case 4: // <C-d>
+        scrollHalfPageDown(e); break;
+      case 21: // <C-u>
+        scrollHalfPageUp(e); break;
+      case 6: // <C-f>
+        scrollPageDown(e); break;
+      case 2: // <C-b>
+        scrollPageUp(e); break;
+      case 5: // <C-e>
+        scrollLineDown(e); break;
+      case 25: // <C-y>
+        scrollLineUp(e); break;
+      default: break;
     }
   } else if (e->mode == Insert) {
     // Deal with insert mode keys.
@@ -622,20 +705,15 @@ bool processChar(Editor *e, char c) {
     } else {
       switch (c) {
         case 27: // Esc
-          e->mode = Normal;
-          break;
+          e->mode = Normal; break;
         case 127: // Backspace
-          backspace(e);
-          break;
+          backspace(e); break;
         case 13: // Enter
-          newLine(e);
-          break;
+          newLine(e); break;
         case 9: // Tab
-          tab(e);
-          break;
+          tab(e); break;
         default:
-          //printf("%d", c);
-          break;
+          fprintf(stderr, "%d\n", c); break;
       }
     }
   }
@@ -647,7 +725,14 @@ void initEditor(Editor *e) {
   if (getWindowSize(&e->height, &e->width) == -1) die("getWindowSize");
 }
 
-void handleArgs(Editor *e, int argc, char *argv[]) {  
+int main(int argc, char *argv[]) {
+  enableRawMode();
+  clearScreen();
+
+  Editor *e = (Editor *) calloc(1, sizeof(Editor));
+  if (e == NULL) die("calloc");
+  initEditor(e);
+
   if (argc == 1) {
     linesAppend(e, gbCreate());
     e->fileOpen = false;
@@ -656,24 +741,12 @@ void handleArgs(Editor *e, int argc, char *argv[]) {
     e->fileOpen = true;
     loadFile(e);
   }
-}
-
-int main(int argc, char *argv[]) {
-  enableRawMode();
-  clearScreen();
-
-  Editor *e = (Editor *) calloc(1, sizeof(Editor));
-  if (e == NULL) die("calloc");
-  initEditor(e);
-  handleArgs(e, argc, argv);
 
   bool quit = false;
   while (!quit) {
     quit = processChar(e, getCh());
     //debugEditor(e);
   };
-
-  if (e->fileOpen) saveFile(e);
 
   return 0;
 }
