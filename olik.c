@@ -33,18 +33,39 @@
    - free lines after closing file
 */
 
-enum EditorMode { Normal, Insert };
-
 // Stores the lines of the files as an arary of gap buffers
 typedef struct {
-  GapBuffer **bufs;
+  GapBuffer **elems;
   size_t size;
   size_t capacity;
 } Lines;
 
+// Command pattern for undo/redo based on line changes:
+// https://en.wikipedia.org/wiki/Undo#Undo_implementation
+enum CommandType {
+  LineChange,
+  LineCreate,
+  LineDestroy,
+};
+
+typedef struct {
+  enum CommandType type;
+  char *line;
+  int row;
+} Command;
+
+typedef struct {
+  Command *elems;
+  size_t size;
+  size_t capacity;
+} Commands;
+
+enum EditorMode { Normal, Insert };
+
 // Editor state and contents
 typedef struct {
   Lines lines;          // Contains the gap buffers for each line
+  Commands commands;    // History (stack) of commands for undo/redo
   int width, height;    // Width and height of the terminal window
   int row, col;         // Row and col in terminal window
   int offset;           // Offset of the window from start of file
@@ -73,7 +94,7 @@ void debugEditor(Editor *e) {
   fprintf(stderr, "  struct Lines {\n");
   for (int i = 0; i < e->lines.size; i++) {
     fprintf(stderr, "    %d: ", i);
-    gbPrint(e->lines.bufs[i], stdout);
+    gbPrint(e->lines.elems[i], stdout);
     fprintf(stderr, "\n");
   }
   fprintf(stderr, "  }\n");
@@ -135,45 +156,51 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
+#define listAppend(list, elem) do { \
+  if ((list)->size >= (list)->capacity) { \
+    (list)->capacity = (list)->capacity == 0 ? EDITOR_LINES_CAP : (list)->capacity * 2; \
+    (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
+  } \
+  (list)->elems[(list)->size++] = (elem); \
+} while (0) \
+
+#define listInsert(list, elem, pos) do { \
+  if ((list)->size >= (list)->capacity) { \
+    (list)->capacity = (list)->capacity == 0 ? EDITOR_LINES_CAP : (list)->capacity * 2; \
+    (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
+  } \
+  memmove(&(list)->elems[(pos)+1], &(list)->elems[(pos)], ((list)->size-(pos)) * sizeof(*(list)->elems)); \
+  (list)->elems[(pos)] = (elem); \
+  (list)->size++; \
+} while (0) \
+
+#define listDelete(list, pos) do { \
+  memmove(&(list)->elems[(pos)], &(list)->elems[(pos)+1], ((list)->size-(pos)-1) * sizeof(*(list)->elems)); \
+  (list)->size--; \
+} while (0) \
+
 /* Append a gap buffer to the lines. */
 void linesAppend(Editor *e, GapBuffer *buf) {
-  // Grow lines capacity if needed
-  if (e->lines.size >= e->lines.capacity) {
-    e->lines.capacity = e->lines.capacity == 0 ? EDITOR_LINES_CAP : e->lines.capacity * 2;
-    e->lines.bufs = (GapBuffer **) realloc(e->lines.bufs, e->lines.capacity * sizeof(GapBuffer *));
-    assert(e->lines.bufs != NULL);
-  }
-  e->lines.bufs[e->lines.size++] = buf;
+  listAppend(&e->lines, buf);
 }
 
 /* Insert a gap buffer in the lines at row. */
 void linesInsert(Editor *e, GapBuffer *buf, int row) {
   row += e->offset;
-  // Grow lines capacity if needed
-  if (e->lines.size >= e->lines.capacity) {
-    e->lines.capacity = e->lines.capacity == 0 ? EDITOR_LINES_CAP : e->lines.capacity * 2;
-    e->lines.bufs = (GapBuffer **) realloc(e->lines.bufs, e->lines.capacity * sizeof(GapBuffer *));
-    assert(e->lines.bufs != NULL);
-  }
-  // Shifts gap buffer pointers after pos by 1
-  memmove(&(e->lines.bufs[row+1]), &(e->lines.bufs[row]), (e->lines.size - row) * sizeof(GapBuffer *));
-  e->lines.bufs[row] = buf;
-  e->lines.size++;
+  listInsert(&e->lines, buf, row);
 }
 
 /* Deletes and frees the gap buffer at pos in lines. */
 void linesDelete(Editor *e, int row) {
   row += e->offset;
-  gbFree(e->lines.bufs[row]);
-  // Shifts gap buffer pointers after pos back by 1
-  memmove(&e->lines.bufs[row], &e->lines.bufs[row+1], (e->lines.size - row - 1) * sizeof(GapBuffer *));
-  e->lines.size--;
+  gbFree(e->lines.elems[row]);
+  listDelete(&e->lines, row);
 }
 
 /* Returns the gap buffer at the given row. */
 GapBuffer *getRow(Editor *e, int row) {
   if (row < e->lines.size)
-    return e->lines.bufs[row + e->offset];
+    return e->lines.elems[row + e->offset];
   return NULL;
 }
 
@@ -509,7 +536,7 @@ void newLine(Editor *e) {
 
   if (e->row + e->offset == e->lines.size) {
     // If its the last line, just append
-    linesAppend(e, gbNew);
+    listAppend(&e->lines, gbNew);
   } else {
     // Otherwise, insert the new gap buffer
     linesInsert(e, gbNew, e->row + 1);
@@ -524,10 +551,10 @@ void newLineNext(Editor *e) {
   GapBuffer *gbNew = gbCreate();
   if (e->row + e->offset == e->lines.size) {
     // If its the last line, just append
-    linesAppend(e, gbNew);
+    listAppend(&e->lines, gbNew);
   } else {
     // Otherwise, insert the new gap buffer
-    linesInsert(e, gbNew, e->row + 1);
+    listInsert(&e->lines, gbNew, e->row + e->offset + 1);
   }
   cursorDown(e, 1);
   e->col = 0;
@@ -538,7 +565,7 @@ void newLineNext(Editor *e) {
 /* Creates a new line on the current line. */
 void newLineCurrent(Editor *e) {
   GapBuffer *gbNew = gbCreate();
-  linesInsert(e, gbNew, e->row);
+  listInsert(&e->lines, gbNew, e->row + e->offset);
   e->col = 0;
   renderLinesAfter(e, e->row);
   e->mode = Insert;
@@ -557,7 +584,7 @@ void loadFile(Editor *e) {
   while ((read = getline(&line, &len, fp)) != -1) {
     GapBuffer *gbNew = gbCreate();
     gbPushChars(gbNew, line, read - 1);
-    linesAppend(e, gbNew);
+    listAppend(&e->lines, gbNew);
   }
 
   fclose(fp);
@@ -571,7 +598,7 @@ void saveFile(Editor *e) {
   fp = fopen(e->fileName, "w");
 
   for (int i = 0; i < e->lines.size; i++) {
-    gbPrint(e->lines.bufs[i], fp);
+    gbPrint(e->lines.elems[i], fp);
     fprintf(fp, "\n");
   }
 
@@ -751,7 +778,7 @@ int main(int argc, char *argv[]) {
   initEditor(e);
 
   if (argc == 1) {
-    linesAppend(e, gbCreate());
+    listAppend(&e->lines, gbCreate());
     e->fileOpen = false;
   } else if (argc == 2) {
     e->fileName = argv[1];

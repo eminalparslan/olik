@@ -2,8 +2,10 @@
 #include <unistd.h>
 #include <string.h>
 #include <assert.h>
-
 #include <stdio.h>
+
+// Basic gap buffer implementation
+// https://en.wikipedia.org/wiki/Gap_buffer
 
 typedef struct {
   char *chars;
