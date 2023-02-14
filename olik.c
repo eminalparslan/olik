@@ -14,9 +14,6 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// Initial increase in capacity for each line in editor
-#define EDITOR_LINES_CAP 8
-
 /*
   TODO:
    - repeat changes
@@ -42,20 +39,23 @@ typedef struct {
 
 // Command pattern for undo/redo based on line changes:
 // https://en.wikipedia.org/wiki/Undo#Undo_implementation
+
 enum CommandType {
   LineChange,
   LineCreate,
   LineDestroy,
 };
 
+// Information on the change
 typedef struct {
   enum CommandType type;
-  char *line;
-  int row;
+  GapBuffer *buf;
+  int line;
 } Command;
 
+// List of commands
 typedef struct {
-  Command *elems;
+  Command **elems;
   size_t size;
   size_t capacity;
 } Commands;
@@ -65,18 +65,20 @@ enum EditorMode { Normal, Insert };
 // Editor state and contents
 typedef struct {
   Lines lines;          // Contains the gap buffers for each line
-  Commands commands;    // History (stack) of commands for undo/redo
   int width, height;    // Width and height of the terminal window
   int row, col;         // Row and col in terminal window
   int offset;           // Offset of the window from start of file
   enum EditorMode mode; // Current mode of the editor
   bool fileOpen;        // Whether a file is open
   char *fileName;       // Name of the open file
+  Commands commands;    // History (stack) of commands for undo/redo
+  int cmdPos;           // Position of the current command
 } Editor;
 
 struct termios orig_termios;
 
-// ANSI escape wrapper functions: https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
+// ANSI escape wrapper functions
+// https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
 void eraseScreen() { printf("\x1b[2J"); }
 void eraseRestScreen() { printf("\x1B[0J"); }
 void eraseLine() { printf("\x1B[2K\r"); }
@@ -156,9 +158,14 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
+// Basic list operations
+
+// Initial capacity for lists (dynamic arrays)
+#define LIST_INIT_CAPACITY 8
+
 #define listAppend(list, elem) do { \
   if ((list)->size >= (list)->capacity) { \
-    (list)->capacity = (list)->capacity == 0 ? EDITOR_LINES_CAP : (list)->capacity * 2; \
+    (list)->capacity = (list)->capacity == 0 ? LIST_INIT_CAPACITY : (list)->capacity * 2; \
     (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
   } \
   (list)->elems[(list)->size++] = (elem); \
@@ -166,7 +173,7 @@ int getWindowSize(int *rows, int *cols) {
 
 #define listInsert(list, elem, pos) do { \
   if ((list)->size >= (list)->capacity) { \
-    (list)->capacity = (list)->capacity == 0 ? EDITOR_LINES_CAP : (list)->capacity * 2; \
+    (list)->capacity = (list)->capacity == 0 ? LIST_INIT_CAPACITY : (list)->capacity * 2; \
     (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
   } \
   memmove(&(list)->elems[(pos)+1], &(list)->elems[(pos)], ((list)->size-(pos)) * sizeof(*(list)->elems)); \
@@ -195,6 +202,19 @@ void linesDelete(Editor *e, int row) {
   row += e->offset;
   gbFree(e->lines.elems[row]);
   listDelete(&e->lines, row);
+}
+
+Command *cmdCreate(enum CommandType type, int line, GapBuffer *gb) {
+  Command *cmd = malloc(sizeof(Command));
+  cmd->type = type;
+  cmd->line = line;
+  cmd->buf = gbCopy(gb);
+  return cmd;
+}
+
+void cmdPush(Editor *e, Command *cmd) {
+  listAppend(&e->commands, cmd);
+  e->cmdPos++;
 }
 
 /* Returns the gap buffer at the given row. */
@@ -308,7 +328,7 @@ void cursorUp(Editor *e, int n) {
 /* Moves the cursor right by n. */
 void cursorRight(Editor *e, int n) {
   if (n <= 0 ) return;
-  if (e->col < gbLen(getRow(e, e->row))) {
+  if (e->col + n - 1 < gbLen(getRow(e, e->row))) {
     moveCursorRight(n);
     e->col += n;
   }
@@ -611,6 +631,9 @@ void writeCh(Editor *e, char ch) {
   int lineLength = gbLen(gb);
   assert(e->col <= lineLength);
 
+  // TODO: free these lines
+  cmdPush(e, cmdCreate(LineChange, e->row + e->offset, gb));
+
   if (e->col == lineLength) {
     // If at the end, just append
     gbPushChar(gb, ch);
@@ -668,6 +691,30 @@ void changeRestLine(Editor *e) {
   e->mode = Insert;
 }
 
+void undo(Editor *e) {
+  if (e->cmdPos <= 0) return;
+  Command *cmd = e->commands.elems[--e->cmdPos];
+
+  // Move screen so that line is at middle
+  e->offset = cmd->line - e->height / 2;
+  if (e->offset < 0) e->offset = 0;
+
+  switch (cmd->type) {
+    case LineChange:
+      e->lines.elems[cmd->line] = cmd->buf;
+      break;
+    case LineCreate:
+      break;
+    case LineDestroy:
+      break;
+    default: return;
+  }
+
+  renderScreen(e);
+  size_t cols = gbLen(getRow(e, e->row));
+  if (e->col > cols - 1) e->col = cols - 1;
+}
+
 /* Handle the next character input. */
 bool processChar(Editor *e, char c) {
   if (e->mode == Normal) {
@@ -710,6 +757,8 @@ bool processChar(Editor *e, char c) {
       case ';':
         // TODO: repeat last find char
         break;
+      case 'u':
+        undo(e); break;
       case 'o':
         newLineNext(e); break;
       case 'O':

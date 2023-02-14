@@ -148,6 +148,13 @@ char gbGetChar(GapBuffer *buf, int pos) {
   }
 }
 
+char *gbGetChars(GapBuffer *buf) {
+  char *line = malloc(gbLen(buf) + 1);
+  strcpy(line, buf->head.chars);
+  strcat(line, buf->tail.chars);
+  return line;
+}
+
 /* Creates a new gap buffer. */
 GapBuffer *gbCreate() {
   GapBuffer *gbNew = calloc(1, sizeof(GapBuffer));
@@ -155,7 +162,20 @@ GapBuffer *gbCreate() {
   return gbNew;
 }
 
+GapBuffer *gbCopy(GapBuffer *buf) {
+  GapBuffer *gbCopy = gbCreate();
+  gbCopy->head = buf->head;
+  gbCopy->head.chars = malloc(buf->head.size * sizeof(char));
+  memcpy(gbCopy->head.chars, buf->head.chars, buf->head.size * sizeof(char));
+  gbCopy->tail = buf->tail;
+  gbCopy->tail.chars = malloc(buf->tail.size * sizeof(char));
+  memcpy(gbCopy->tail.chars, buf->tail.chars, buf->tail.size * sizeof(char));
+  return gbCopy;
+}
+
 /* Frees the gap buffer. */
 void gbFree(GapBuffer *buf) {
+  free(buf->head.chars);
+  free(buf->tail.chars);
   free(buf);
 }

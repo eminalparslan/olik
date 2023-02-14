@@ -30,5 +30,7 @@ void gbConcat(GapBuffer *buf1, GapBuffer *buf2);
 void gbSplit(GapBuffer *dst, GapBuffer *src);
 void gbClearTail(GapBuffer *buf);
 char gbGetChar(GapBuffer *buf, int pos);
+char *gbGetChars(GapBuffer *buf);
 GapBuffer *gbCreate();
+GapBuffer *gbCopy(GapBuffer *buf);
 void gbFree(GapBuffer *buf);
