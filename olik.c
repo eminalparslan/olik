@@ -1,7 +1,3 @@
-#define _DEFAULT_SOURCE
-#define _BSD_SOURCE
-#define _GNU_SOURCE
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -10,12 +6,16 @@
 #include <ctype.h>
 #include <termios.h>
 #include <sys/ioctl.h>
+
+#include "list.h"
 #include "gapbuffer.h"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 /*
   TODO:
+   - USE PIECE TABLE
+     - after certain period of inactivity, save to disk and reload for short change list
    - repeat changes
    - undo/redo
    - change/delete word
@@ -79,16 +79,16 @@ struct termios orig_termios;
 
 // ANSI escape wrapper functions
 // https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
-void eraseScreen() { printf("\x1b[2J"); }
-void eraseRestScreen() { printf("\x1B[0J"); }
-void eraseLine() { printf("\x1B[2K\r"); }
-void moveCursorHome() { printf("\x1b[H"); }
+void eraseScreen(void) { printf("\x1b[2J"); }
+void eraseRestScreen(void) { printf("\x1B[0J"); }
+void eraseLine(void) { printf("\x1B[2K\r"); }
+void moveCursorHome(void) { printf("\x1b[H"); }
 void moveCursorLeft(int n) { printf("\x1B[%dD", n); }
 void moveCursorRight(int n) { printf("\x1B[%dC", n); }
 void setCursorPos(int row, int col) { printf("\x1B[%d;%df", row+1, col+1); }
 void setCursorCol(int col) { printf("\x1B[%dG", col+1); }
-void hideCursor() { printf("\x1B[?25l"); }
-void showCursor() { printf("\x1B[?25h"); }
+void hideCursor(void) { printf("\x1B[?25l"); }
+void showCursor(void) { printf("\x1B[?25h"); }
 
 /* Prints the editor content to stderr. */
 void debugEditor(Editor *e) {
@@ -107,7 +107,7 @@ void debugEditor(Editor *e) {
 }
 
 /* Clears the screen and moves the cursor home. */
-void clearScreen() {
+void clearScreen(void) {
   eraseScreen();
   moveCursorHome();
 }
@@ -120,13 +120,13 @@ void die(const char *s) {
 }
 
 /* Disables raw mode for termios. Called at program exit. */
-void disableRawMode() {
+void disableRawMode(void) {
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) die("tcsetattr");
   clearScreen();
 }
 
 /* Enables raw mode and saves original termios state. */
-void enableRawMode() {
+void enableRawMode(void) {
   if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) die("tcgetattr");
   // Restore terminal to original state at program exit
   atexit(disableRawMode);
@@ -157,34 +157,6 @@ int getWindowSize(int *rows, int *cols) {
     return 0;
   }
 }
-
-// Basic list operations
-
-// Initial capacity for lists (dynamic arrays)
-#define LIST_INIT_CAPACITY 8
-
-#define listAppend(list, elem) do { \
-  if ((list)->size >= (list)->capacity) { \
-    (list)->capacity = (list)->capacity == 0 ? LIST_INIT_CAPACITY : (list)->capacity * 2; \
-    (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
-  } \
-  (list)->elems[(list)->size++] = (elem); \
-} while (0) \
-
-#define listInsert(list, elem, pos) do { \
-  if ((list)->size >= (list)->capacity) { \
-    (list)->capacity = (list)->capacity == 0 ? LIST_INIT_CAPACITY : (list)->capacity * 2; \
-    (list)->elems = realloc((list)->elems, (list)->capacity * sizeof(*(list)->elems)); \
-  } \
-  memmove(&(list)->elems[(pos)+1], &(list)->elems[(pos)], ((list)->size-(pos)) * sizeof(*(list)->elems)); \
-  (list)->elems[(pos)] = (elem); \
-  (list)->size++; \
-} while (0) \
-
-#define listDelete(list, pos) do { \
-  memmove(&(list)->elems[(pos)], &(list)->elems[(pos)+1], ((list)->size-(pos)-1) * sizeof(*(list)->elems)); \
-  (list)->size--; \
-} while (0) \
 
 /* Append a gap buffer to the lines. */
 void linesAppend(Editor *e, GapBuffer *buf) {
@@ -251,7 +223,7 @@ void renderScreen(Editor *e) {
 }
 
 /* Get the next character input. */
-char getCh() {
+char getCh(void) {
   int nread;
   char c;
   while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
@@ -658,6 +630,7 @@ void deleteLine(Editor *e) {
   linesDelete(e, e->row);
   renderLinesAfter(e, e->row);
   if (e->row + e->offset == e->lines.size) cursorUp(e, 1);
+  e->col = 0;
 }
 
 /* Delete handler. */
@@ -692,6 +665,7 @@ void changeRestLine(Editor *e) {
 }
 
 void undo(Editor *e) {
+  // recursive call
   if (e->cmdPos <= 0) return;
   Command *cmd = e->commands.elems[--e->cmdPos];
 
@@ -712,7 +686,10 @@ void undo(Editor *e) {
 
   renderScreen(e);
   size_t cols = gbLen(getRow(e, e->row));
-  if (e->col > cols - 1) e->col = cols - 1;
+  if (e->col > cols) {
+    e->col = cols;
+    setCursorCol(e->col);
+  }
 }
 
 /* Handle the next character input. */

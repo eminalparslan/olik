@@ -3,12 +3,13 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include "list.h"
 
 // Basic gap buffer implementation
 // https://en.wikipedia.org/wiki/Gap_buffer
 
 typedef struct {
-  char *chars;
+  char *elems;
   size_t size;
   size_t capacity;
 } String;
@@ -31,6 +32,6 @@ void gbSplit(GapBuffer *dst, GapBuffer *src);
 void gbClearTail(GapBuffer *buf);
 char gbGetChar(GapBuffer *buf, int pos);
 char *gbGetChars(GapBuffer *buf);
-GapBuffer *gbCreate();
+GapBuffer *gbCreate(void);
 GapBuffer *gbCopy(GapBuffer *buf);
 void gbFree(GapBuffer *buf);
