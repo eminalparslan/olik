@@ -17,6 +17,7 @@
    - USE PIECE TABLE
      - after certain period of inactivity, save to disk and reload for short change list
    - repeat changes
+   - truncate visible text to screen width
    - undo/redo
    - change/delete word
    - searching
@@ -30,7 +31,7 @@
    - free lines after closing file
 */
 
-// Stores the lines of the files as an arary of gap buffers
+// Stores the lines of the files as an array of gap buffers
 typedef struct {
   GapBuffer **elems;
   size_t size;
