@@ -92,9 +92,7 @@
   (list)->size = 0; \
 } while (0)
 
-#define listPop(list) do { \
-  listDelete((list), (list)->size-1); \
-} while (0)
+#define listPop(list) (list)->elems[((list)->size--)-1];
 
 #define listPeek(list) (list)->elems[(list)->size-1]
 

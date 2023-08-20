@@ -22,5 +22,53 @@ int main(void) {
   ptPrint(pt);
   ptInsertChars(pt, 28, "v", 1);
   ptPrint(pt);
+
+  char dest[4];
+  dest[sizeof(dest)-1] = '\0';
+  size_t total;
+
+  total = ptGetChars(pt, dest, 5, 3);
+  printf("%s: %zu\n", dest, total);
+  total = ptGetChars(pt, dest, 5, 3);
+  printf("%s: %zu\n", dest, total);
+  total = ptGetChars(pt, dest, 0, 3);
+  printf("%s: %zu\n", dest, total);
+
+  char dest2[pt->sequence_length+1];
+  dest[sizeof(dest)-1] = '\0';
+
+  total = ptGetChars(pt, dest2, 0, pt->sequence_length);
+  printf("%s: %zu\n", dest2, total);
+
+  bool status;
+  status = ptRedo(pt);
+  assert(status == false);
+
+  printf("Undo/Redo\n");
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptRedo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptRedo(pt);
+  ptPrint(pt);
+  ptRedo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
+  ptUndo(pt);
+  ptPrint(pt);
 }
 
