@@ -10,8 +10,6 @@
 
 // Reference: https://www.catch22.net/tuts/neatpad/piece-chains/
 
-// TODO: make sure pieces of length 0 aren't added to the piece table
-
 Piece *pieceCreate(size_t offset, size_t length, WhichBuffer which) {
   Piece *p = calloc(1, sizeof(Piece));
   p->which = which;
@@ -321,6 +319,7 @@ void ptDeleteChars(PieceTable *pt, size_t index, size_t length) {
         pt->sequence_length -= length;
         prev_index = index;
         // this is all we need to do
+        debug_print("Delete:     early return; leftPiece->length=%zu", leftPiece->length);
         return;
       } else {
         // this piece can be removed
@@ -342,9 +341,11 @@ void ptDeleteChars(PieceTable *pt, size_t index, size_t length) {
         // first Piece in remove range
         in_piece_offset = (size_t) in_piece_offset;
         pieceAppend(oldPR, piece);
-        // split and keep first half
-        leftPiece = pieceCreate(piece->offset, in_piece_offset, piece->which);
-        pieceAppend(&newPR, leftPiece);
+        if (in_piece_offset > 0) {
+          // split and keep first half
+          leftPiece = pieceCreate(piece->offset, in_piece_offset, piece->which);
+          pieceAppend(&newPR, leftPiece);
+        }
         // check if we need to split again and keep last part
         if (in_piece_offset + remaining_length < piece->length) {
           rightPiece = pieceCreate(piece->offset + in_piece_offset + remaining_length,
@@ -380,8 +381,9 @@ void ptDeleteChars(PieceTable *pt, size_t index, size_t length) {
       // default: we have a new undo event
       listAppend(&pt->undo_stack, oldPR);
     }
-
-    rangeSwap(oldPR, &newPR);
+    if (newPR.first && newPR.last) {
+      rangeSwap(oldPR, &newPR);
+    }
   }
 
   prev_index = index;
