@@ -12,6 +12,9 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
+// Rougly based on the Kilo text editor
+// https://viewsourcecode.org/snaptoken/kilo/
+
 /*
   TODO:
    - USE PIECE TABLE

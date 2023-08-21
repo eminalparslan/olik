@@ -1,25 +1,62 @@
 #include "piecetable.h"
 #include "list.h"
 
+#define DEBUG 1
+
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+#define debug_print(str, ...) printf("[DEBUG] %s:%d "str"\n", __FILE__, __LINE__, __VA_ARGS__)
+
 // Reference: https://www.catch22.net/tuts/neatpad/piece-chains/
 
+// TODO: make sure pieces of length 0 aren't added to the piece table
+
 Piece *pieceCreate(size_t offset, size_t length, WhichBuffer which) {
-  Piece *p = malloc(sizeof(Piece));
+  Piece *p = calloc(1, sizeof(Piece));
   p->which = which;
   p->offset = offset;
   p->length = length;
   return p;
 }
 
-PieceRange *rangeCreate(PieceTable *pt, size_t index, size_t length, Action action,
-                        Piece *first, Piece *last, bool boundary) {
+void pieceAppend(PieceRange *pr, Piece *piece) {
+  if (pr->first == NULL) {
+    pr->first = piece;
+  } else {
+    pr->last->next = piece;
+    piece->prev = pr->last;
+  }
+  pr->last = piece;
+}
+
+void pieceRemove(Piece *piece) {
+  piece->prev->next = piece->next;
+  piece->next->prev = piece->prev;
+  free(piece);
+}
+
+PieceRange *rangeCreate(PieceTable *pt, Piece *first, Piece *last, bool boundary) {
   PieceRange *pr = malloc(sizeof(PieceRange));
   pr->first = first;
   pr->last = last;
   pr->boundary = boundary;
-  pr->action = action;
   pr->sequence_length = pt->sequence_length;
   return pr;
+}
+
+void rangeExtend(PieceRange *src, PieceRange *dest) {
+  if (!src->boundary) {
+    if (dest->boundary) {
+      dest->first = src->first;
+      dest->last = src->last;
+      dest->boundary = false;
+    } else {
+      src->last->next = dest->first;
+      dest->first->prev = src->last;
+      dest->first = src->first;
+    }
+  }
 }
 
 void rangeSwap(PieceRange *src, PieceRange *dest) {
@@ -99,8 +136,10 @@ void rangeSwapBack(PieceTable *pt, PieceRange *pr) {
     }
   }
 
-  // restore sequence length
-  pt->sequence_length = pr->sequence_length;
+  // restore sequence length and save current sequence length
+  size_t new_sequence_length = pr->sequence_length;
+  pr->sequence_length = pt->sequence_length;
+  pt->sequence_length = new_sequence_length;
 }
 
 PieceTable *ptCreate(const char *original_buffer, size_t buffer_length) {
@@ -139,6 +178,7 @@ void ptFree(PieceTable *pt) {
 }
 
 bool ptUndo(PieceTable *pt) {
+  if (DEBUG) debug_print("Undo: %zu", pt->undo_stack.size);
   if (pt->undo_stack.size == 0) return false;
   // prevent optimized actions
   pt->last_action = Nop;
@@ -150,6 +190,7 @@ bool ptUndo(PieceTable *pt) {
 }
 
 bool ptRedo(PieceTable *pt) {
+  if (DEBUG) debug_print("Redo: %zu", pt->redo_stack.size);
   if (pt->redo_stack.size == 0) return false;
   // prevent optimized actions
   pt->last_action = Nop;
@@ -161,7 +202,8 @@ bool ptRedo(PieceTable *pt) {
 }
 
 void ptInsertChars(PieceTable *pt, size_t index, const char *chars, size_t length) {
-  assert(0 <= index && index < pt->sequence_length);
+  if (DEBUG) debug_print("Insert: index=%zu chars='%s' length=%zu", index, chars, length);
+  assert(0 <= index && index <= pt->sequence_length);
   if (length <= 0) return;
 
   // keep track of current offset in 'add' buffer
@@ -183,33 +225,28 @@ void ptInsertChars(PieceTable *pt, size_t index, const char *chars, size_t lengt
     if (current_index > index) {
       // inserting in the middle of a Piece, so break this piece apart
       // first, save the current Piece in a PieceRange
-      PieceRange *oldPR = rangeCreate(pt, index, length, Insert, piece, piece, false);
+      PieceRange *oldPR = rangeCreate(pt, piece, piece, false);
       listAppend(&pt->undo_stack, oldPR);
       // next, create new Pieces
       Piece *leftPiece = pieceCreate(piece->offset, in_piece_offset, piece->which);
       Piece *newPiece = pieceCreate(add_offset, length, Add);
       Piece *rightPiece = pieceCreate(piece->offset + in_piece_offset, piece->length - in_piece_offset, piece->which);
       // link them up
-      leftPiece->next = newPiece;
-      newPiece->prev = leftPiece;
-      newPiece->next = rightPiece;
-      rightPiece->prev = newPiece;
-      // add them to a PieceRange
-      PieceRange newPR = {
-        .first = leftPiece,
-        .last = rightPiece,
-        .boundary = false,
-      };
+      PieceRange newPR = { .boundary = false };
+      pieceAppend(&newPR, leftPiece);
+      pieceAppend(&newPR, newPiece);
+      pieceAppend(&newPR, rightPiece);
       // swap the ranges
       rangeSwap(oldPR, &newPR);
     } else if (current_index == index) {
       // insert after this piece at boundary
       if (index == prev_end_index && pt->last_action == Insert) {
+        if (DEBUG) debug_print("Insert:     optimized at index=%zu", index);
         // we can just extend the last Piece since our last insert ended here
         piece->length += length;
       } else {
         // add current state to undo stack
-        PieceRange *oldPR = rangeCreate(pt, index, length, Insert, piece, piece->next, true);
+        PieceRange *oldPR = rangeCreate(pt, piece, piece->next, true);
         listAppend(&pt->undo_stack, oldPR);
         // create new piece
         Piece *newPiece = pieceCreate(add_offset, length, Add);
@@ -228,7 +265,7 @@ void ptInsertChars(PieceTable *pt, size_t index, const char *chars, size_t lengt
   // can't optimize here since prev_end_index can never be == 0
   if (index == 0) {
     // add current state to undo stack
-    PieceRange *oldPR = rangeCreate(pt, index, length, Insert, pt->head, pt->head->next, true);
+    PieceRange *oldPR = rangeCreate(pt, pt->head, pt->head->next, true);
     listAppend(&pt->undo_stack, oldPR);
     // create new piece
     Piece *newPiece = pieceCreate(add_offset, length, Add);
@@ -250,21 +287,119 @@ void ptInsertChar(PieceTable *pt, size_t index, char c) {
   ptInsertChars(pt, index, &c, 1);
 }
 
-void ptDeleteChars(PieceTable *pt, size_t start_index, size_t end_index) {
+void ptDeleteChars(PieceTable *pt, size_t index, size_t length) {
+  if (DEBUG) debug_print("Delete: index=%zu length=%zu seq_length=%zu", index, length, pt->sequence_length);
+  assert(index + length <= pt->sequence_length);
+  if (length <= 0) return;
 
+  // clear redo stack
+  listClear(&pt->redo_stack);
+
+  Piece *piece;
+  // PieceRange for replaced pieces
+  PieceRange *oldPR = rangeCreate(pt, NULL, NULL, false);
+  // PieceRange that will be swapped with oldPR
+  PieceRange newPR = { .boundary = false };
+  bool update_prev_undo = false;
+  size_t current_index = 0;
+  size_t remaining_length = length;
+  // keep track of the last index we deleted at
+  static size_t prev_index = -1;
+  // keep track of these for optimizing consecutive deletes
+  static Piece *leftPiece = NULL;
+  static Piece *rightPiece = NULL;
+
+  // TODO: implement optimization for deleting on other side
+
+  if (index + length == prev_index && pt->last_action == Delete) {
+    // we can extend the last delete "backwards"
+    if (DEBUG) debug_print("Delete:     optimized at index=%zu", index + length);
+    if (leftPiece != NULL) {
+      if (length < leftPiece->length) {
+        // just shorten the Piece to delete the rest of the Piece
+        leftPiece->length -= length;
+        pt->sequence_length -= length;
+        prev_index = index;
+        // this is all we need to do
+        return;
+      } else {
+        // this piece can be removed
+        remaining_length -= leftPiece->length;
+        pieceRemove(leftPiece);
+        leftPiece = NULL;
+        // we need to update the last undo
+        update_prev_undo = true;
+      }
+    }
+  }
+
+  // iterate over piece table
+  for (piece = pt->head->next; piece->next && remaining_length > 0; piece = piece->next) {
+    int in_piece_offset = index - current_index;
+    current_index += piece->length;
+    if (current_index >= index) {
+      if (in_piece_offset >= 0) {
+        // first Piece in remove range
+        in_piece_offset = (size_t) in_piece_offset;
+        pieceAppend(oldPR, piece);
+        // split and keep first half
+        leftPiece = pieceCreate(piece->offset, in_piece_offset, piece->which);
+        pieceAppend(&newPR, leftPiece);
+        // check if we need to split again and keep last part
+        if (in_piece_offset + remaining_length < piece->length) {
+          rightPiece = pieceCreate(piece->offset + in_piece_offset + remaining_length,
+                                   piece->length - in_piece_offset - remaining_length,
+                                   piece->which);
+          pieceAppend(&newPR, rightPiece);
+          remaining_length = 0;
+        } else {
+          remaining_length -= piece->length - in_piece_offset;
+        }
+      } else {
+        pieceAppend(oldPR, piece);
+        // check if only part of the last piece is removed
+        if (remaining_length < piece->length) {
+          Piece *newPiece = pieceCreate(piece->offset + remaining_length,
+                                        piece->length - remaining_length,
+                                        piece->which);
+          pieceAppend(&newPR, newPiece);
+          remaining_length = 0;
+        } else {
+          remaining_length -= piece->length;
+        }
+      }
+    }
+  }
+  
+  if (oldPR->first && oldPR->last) {
+    if (update_prev_undo) {
+      // optimized path: update the last undo
+      PieceRange *prevOldPR = listPeek(&pt->undo_stack);
+      rangeExtend(oldPR, prevOldPR);
+    } else {
+      // default: we have a new undo event
+      listAppend(&pt->undo_stack, oldPR);
+    }
+
+    rangeSwap(oldPR, &newPR);
+  }
+
+  prev_index = index;
+  pt->sequence_length -= length;
+  pt->last_action = Delete;
 }
 
 void ptDeleteChar(PieceTable *pt, size_t index) {
-  ptDeleteChars(pt, index, index + 1);
+  ptDeleteChars(pt, index, 1);
 }
 
-void ptReplaceChars(PieceTable *pt, size_t start_index, size_t end_index,
-                    const char *chars, size_t length) {
+void ptReplaceChars(PieceTable *pt, size_t index, const char *chars, size_t length) {
+  if (DEBUG) debug_print("Replace: index=%zu chars='%s' length=%zu", index, chars, length);
 
 }
 
 void ptReplaceChar(PieceTable *pt, size_t index, char c) {
-  ptReplaceChars(pt, index, index + 1, &c, 1);
+  ptReplaceChars(pt, index, &c, 1);
 }
 
 size_t ptGetChars(PieceTable *pt, char *dest, size_t index, size_t length) {

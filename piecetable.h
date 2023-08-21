@@ -31,7 +31,6 @@ typedef struct {
   Piece *first;
   Piece *last;
   bool boundary;
-  Action action;
   size_t sequence_length;
 } PieceRange; // TODO: free ranges
 
@@ -59,10 +58,10 @@ bool ptUndo(PieceTable *pt);
 bool ptRedo(PieceTable *pt);
 void ptInsertChars(PieceTable *pt, size_t index, const char *chars, size_t length);
 void ptInsertChar(PieceTable *pt, size_t index, char c);
-void ptDeleteChars(PieceTable *pt, size_t start_index, size_t end_index);
+void ptDeleteChars(PieceTable *pt, size_t index, size_t length);
 void ptDeleteChar(PieceTable *pt, size_t index);
-void ptReplaceChars(PieceTable *pt, size_t start_index, size_t end_index, const char *chars, size_t length);
+void ptReplaceChars(PieceTable *pt, size_t index, const char *chars, size_t length);
 void ptReplaceChar(PieceTable *pt, size_t index, char c);
-size_t ptGetChars(PieceTable *pt, char *dest, size_t start_index, size_t end_index);
+size_t ptGetChars(PieceTable *pt, char *dest, size_t index, size_t length);
 void ptPrint(PieceTable *pt);
 

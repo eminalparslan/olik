@@ -1,74 +1,154 @@
 #include <stdio.h>
 #include <assert.h>
+
 #include "piecetable.h"
 
 int main(void) {
   const char text[] = "Hello world";
-  PieceTable *pt = ptCreate(text, sizeof(text));
-  ptPrint(pt);
-  ptInsertChars(pt, 2, "abc", 3);
-  ptPrint(pt);
-  ptInsertChars(pt, 2, "xyz", 3);
-  ptPrint(pt);
-  ptInsertChars(pt, 2, "ooo", 3);
-  ptPrint(pt);
-  ptInsertChars(pt, 5, "iii", 3);
-  ptPrint(pt);
-  ptInsertChars(pt, 0, "ppp", 3);
-  ptPrint(pt);
-  ptInsertChars(pt, 0, "u", 1);
-  ptPrint(pt);
-  ptInsertChars(pt, 27, "u", 1);
-  ptPrint(pt);
-  ptInsertChars(pt, 28, "v", 1);
-  ptPrint(pt);
+  PieceTable *pt = ptCreate(text, sizeof(text)-1);
+  char dest[30];
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world", pt->sequence_length) == 0);
 
-  char dest[4];
-  dest[sizeof(dest)-1] = '\0';
-  size_t total;
+  ptInsertChars(pt, 0, "world  ", 6);
+  ptInsertChars(pt, 0, "Hello ", 6);
+  assert(pt->sequence_length == 23);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world Hello world", pt->sequence_length) == 0);
 
-  total = ptGetChars(pt, dest, 5, 3);
-  printf("%s: %zu\n", dest, total);
-  total = ptGetChars(pt, dest, 5, 3);
-  printf("%s: %zu\n", dest, total);
-  total = ptGetChars(pt, dest, 0, 3);
-  printf("%s: %zu\n", dest, total);
-
-  char dest2[pt->sequence_length+1];
-  dest[sizeof(dest)-1] = '\0';
-
-  total = ptGetChars(pt, dest2, 0, pt->sequence_length);
-  printf("%s: %zu\n", dest2, total);
+  ptInsertChars(pt, 5, " good", 5);
+  assert(pt->sequence_length == 28);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello good world Hello world", pt->sequence_length) == 0);
 
   bool status;
   status = ptRedo(pt);
   assert(status == false);
 
-  printf("Undo/Redo\n");
-  ptPrint(pt);
   ptUndo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 23);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world Hello world", pt->sequence_length) == 0);
+
   ptRedo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 28);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello good world Hello world", pt->sequence_length) == 0);
+
   ptUndo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 23);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world Hello world", pt->sequence_length) == 0);
+
   ptUndo(pt);
-  ptPrint(pt);
-  ptUndo(pt);
-  ptPrint(pt);
-  ptUndo(pt);
-  ptPrint(pt);
-  ptUndo(pt);
-  ptPrint(pt);
-  ptUndo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 17);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "world Hello world", pt->sequence_length) == 0);
+
   ptRedo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 23);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world Hello world", pt->sequence_length) == 0);
+
+  ptUndo(pt);
+  assert(pt->sequence_length == 17);
+  ptUndo(pt);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world", pt->sequence_length) == 0);
+
   ptRedo(pt);
-  ptPrint(pt);
+  ptRedo(pt);
+  ptRedo(pt);
+  assert(pt->sequence_length == 28);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello good world Hello world", pt->sequence_length) == 0);
+
+  ptDeleteChars(pt, 6, 17);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world", pt->sequence_length) == 0);
+
   ptUndo(pt);
-  ptPrint(pt);
+  assert(pt->sequence_length == 28);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello good world Hello world", pt->sequence_length) == 0);
+
+  ptDeleteChars(pt, 5, 18);
+  assert(pt->sequence_length == 10);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Helloworld", pt->sequence_length) == 0);
+
+  ptDeleteChars(pt, 0, 10);
+  assert(pt->sequence_length == 0);
+
   ptUndo(pt);
+  assert(pt->sequence_length == 10);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Helloworld", pt->sequence_length) == 0);
+
+  ptInsertChars(pt, 5, " ", 1);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello world", pt->sequence_length) == 0);
+
+  // should go through optimized path for inserting
+  ptInsertChars(pt, 6, " ", 1);
+  assert(pt->sequence_length == 12);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Hello  world", pt->sequence_length) == 0);
+
+  ptUndo(pt); // optimized (consecutive) actions are grouped in undo/redo
+  ptInsertChars(pt, 10, "s", 1);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "Helloworlds", pt->sequence_length) == 0);
+
+  ptInsertChar(pt, 0, ' ');
+  assert(pt->sequence_length == 12);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, " Helloworlds", pt->sequence_length) == 0);
+
+  // should go through optimized path for inserting
+  ptInsertChar(pt, 1, ' ');
+  assert(pt->sequence_length == 13);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "  Helloworlds", pt->sequence_length) == 0);
+
+  // should go through optimized path for inserting
+  ptInsertChar(pt, 2, ' ');
+  assert(pt->sequence_length == 14);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  assert(memcmp(dest, "   Helloworlds", pt->sequence_length) == 0);
+
+  ptDeleteChar(pt, 2);
+  assert(pt->sequence_length == 13);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
   ptPrint(pt);
+  assert(memcmp(dest, "  Helloworlds", pt->sequence_length) == 0);
+
+  // should go through optimized path for deleting
+  ptDeleteChar(pt, 1);
+  assert(pt->sequence_length == 12);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  ptPrint(pt);
+  assert(memcmp(dest, " Helloworlds", pt->sequence_length) == 0);
+
+  // should go through optimized path for deleting
+  ptDeleteChar(pt, 0);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  ptPrint(pt);
+  assert(memcmp(dest, "Helloworlds", pt->sequence_length) == 0);
+
+  ptDeleteChar(pt, 0);
+  assert(pt->sequence_length == 11);
+  ptGetChars(pt, dest, 0, pt->sequence_length);
+  ptPrint(pt);
+  assert(memcmp(dest, "Helloworlds", pt->sequence_length) == 0);
+
+  printf("PASSED ALL TESTS\n");
+  return 0;
 }
 
